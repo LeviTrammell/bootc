@@ -13,7 +13,7 @@ dnf install -y --best \
   wl-clipboard \
   zsh \
   podman \
-  podman-plugins \
+  podman-remote \
   openssh-server \
   sshfs \
   qemu-img
