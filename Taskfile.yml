@@ -1,0 +1,15 @@
+---
+version: 3
+
+includes:
+  containers: .taskfiles/containers
+  images: .taskfiles/images
+
+vars:
+  FEDORA_MAJOR_VERSION: 42
+  ARCH: { sh: uname -m }
+  BOOTC_IMAGE_TYPE: raw
+  BASE_REPO: ghcr.io/levitrammell
+
+tasks:
+  default: task --list-all

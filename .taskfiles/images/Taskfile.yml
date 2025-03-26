@@ -1,0 +1,39 @@
+---
+version: 3
+
+vars:
+  BOOTC_IMAGE_TYPE: raw
+  ROOTFS: xfs
+
+tasks:
+  bootc-image-builder:
+    internal: true
+    requires:
+      vars: [IMAGE, BOOTC_IMAGE_TYPE, ARCH, OUTDIR, CONFIG, BASE_REPO]
+    cmds:
+      - cmd: mkdir -p ./{{.OUTDIR}}
+      # - cmd: podman pull {{.BASE_REPO}}/{{.IMAGE}}
+      - cmd: >
+          podman run --rm -it --privileged
+          --security-opt label=type:unconfined_t
+          -v $(pwd)/{{.CONFIG}}:/config.toml:ro
+          -v $(pwd)/{{.OUTDIR}}:/output
+          -v /var/lib/containers/storage:/var/lib/containers/storage
+          --pull=newer
+          --platform linux/{{.ARCH}}
+          quay.io/centos-bootc/bootc-image-builder:latest
+          --target-arch {{.ARCH}}
+          --type {{.BOOTC_IMAGE_TYPE}}
+          --rootfs {{.ROOTFS}}
+          {{.BASE_REPO}}/{{.IMAGE}}
+
+  pi:
+    cmd:
+      task: bootc-image-builder
+      vars:
+        ARCH: aarch64
+        IMAGE: pi
+        ROOTFS: ext4
+        OUTDIR: dist/pi
+        CONFIG: variants/streampi/config.toml
+

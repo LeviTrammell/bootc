@@ -1,0 +1,12 @@
+[Unit]
+Description=USB gadget initialization
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/usb-gadget.sh
+
+[Install]
+WantedBy=sysinit.target

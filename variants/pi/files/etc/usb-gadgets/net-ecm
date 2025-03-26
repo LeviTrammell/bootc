@@ -1,0 +1,11 @@
+config1="ECM"
+usb_version="0x0200" # USB 2.0
+vendor_id="0x1d6b" # Linux Foundation
+product_id="0x0104" # Multifunction composite gadget
+bcd_device="0x0100" # v1.0.0
+device_class="0xEF"
+device_subclass="0x02"
+device_protocol="0x01"
+manufacturer="github.com/LeviTrammell"
+product="RPi4 USB Gadget"
+power="250"

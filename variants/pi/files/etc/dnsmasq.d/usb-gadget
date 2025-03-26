@@ -1,0 +1,17 @@
+# Only bind when usb0 is up
+bind-dynamic
+
+# Restrict to usb0 interface
+interface=usb0
+
+# DHCP configuration
+dhcp-rapid-commit
+dhcp-authoritative
+no-ping
+dhcp-range=usb0,10.55.0.2,10.55.0.6,255.255.255.248,1h
+domain=usb.lan
+dhcp-option=usb0,3
+
+# Don't persist leases (stateless)
+leasefile-ro
+

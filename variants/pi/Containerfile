@@ -1,0 +1,38 @@
+ARG FEDORA_MAJOR_VERSION
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
+
+COPY ./variants/pi/files/wheel-passwordless-sudo /etc/sudoers.d/wheel-passwordless-sudo
+
+COPY ./scripts/install-common.sh /tmp
+RUN /tmp/install-common.sh
+
+RUN dnf install -y bcm2711-firmware uboot-images-armv8 && \
+  cp -P /usr/share/uboot/rpi_arm64/u-boot.bin /boot/efi/rpi-u-boot.bin && \
+  mkdir -p /usr/lib/bootc-raspi-firmwares && \
+  cp -a /boot/efi/. /usr/lib/bootc-raspi-firmwares/ && \
+  dnf remove -y bcm2711-firmware uboot-images-armv8 && \
+  mkdir /usr/bin/bootupctl-orig && \
+  mv /usr/bin/bootupctl /usr/bin/bootupctl-orig/ && \
+  dnf clean all
+
+RUN systemctl enable sshd
+
+COPY ./variants/pi/files/etc/systemd/system/usb-gadget.service /etc/systemd/system/usb-gadget.service
+COPY ./variants/pi/files/etc/systemd/system/dnsmasq-usb0.service /etc/systemd/system/dnsmasq-usb0.service
+COPY ./variants/pi/files/etc/modules-load.d/gadget.conf /etc/modules-load.d/gadget.conf
+COPY ./variants/pi/files/etc/usb-gadgets/net-ecm /etc/usb-gadgets/net-ecm
+COPY ./variants/pi/files/usr/local/bin/usb-gadget.sh /usr/local/bin/usb-gadget.sh
+COPY ./variants/pi/files/etc/dnsmasq.d/usb-gadget /etc/dnsmasq.d/usb-gadget
+COPY ./variants/pi/scripts/setup-usb-gadget.sh /tmp
+
+RUN /tmp/setup-usb-gadget.sh
+
+COPY ./variants/pi/files/usr/lib/dracut/modules.d/99growfs/growfs.sh /usr/lib/dracut/modules.d/99growfs/growfs.sh
+COPY ./variants/pi/files/usr/lib/dracut/modules.d/99growfs/module-setup.sh /usr/lib/dracut/modules.d/99growfs/module-setup.sh
+COPY ./variants/pi/scripts/install-first-boot-resize.sh /tmp
+RUN /tmp/install-first-boot-resize.sh
+
+COPY ./variants/pi/files/bootupctl-shim /usr/bin/bootupctl
+
+RUN bootc container lint
+
