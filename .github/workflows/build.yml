@@ -1,0 +1,29 @@
+---
+name: Build
+on:
+  schedule:
+    - cron: '05 10 * * *' # 10:05am UTC Everyday
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/README.md'
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  IMAGE_REGISTRY: 'ghcr.io/${{ github.repository_owner }}' # do not edit
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  devpi:
+    name: pi
+    uses: ./.github/workflows/build-image.yml
+    secrets: inherit
+    with:
+      image: pi
+      arch: linux/arm64
