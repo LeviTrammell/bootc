@@ -14,6 +14,7 @@ dnf install -y --best \
   zsh \
   podman \
   openssh-server \
-  sshfs
+  sshfs \
+  qemu-img
 
 dnf clean all
