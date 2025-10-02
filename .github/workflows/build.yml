@@ -27,3 +27,11 @@ jobs:
     with:
       image: pi
       arch: linux/arm64
+
+  phone:
+    name: phone
+    uses: ./.github/workflows/build-image.yml
+    secrets: inherit
+    with:
+      image: phone
+      arch: linux/arm64

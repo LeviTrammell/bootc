@@ -37,3 +37,18 @@ tasks:
         OUTDIR: dist/pi
         CONFIG: variants/streampi/config.toml
 
+  odroid-go-ultra:
+    cmd:
+      task: bootc-image-builder
+      vars:
+        ARCH: aarch64
+        IMAGE: odroid-go-ultra
+        ROOTFS: ext4
+        OUTDIR: dist/odroid-go-ultra
+        CONFIG: variants/odroid-go-ultra/config.toml
+
+  odroid-go-ultra-complete:
+    deps: [odroid-go-ultra]
+    desc: Build complete Odroid Go Ultra image with embedded bootloader
+    cmd: ./variants/odroid-go-ultra/scripts/create-full-image.sh {{.BASE_REPO}}/odroid-go-ultra
+

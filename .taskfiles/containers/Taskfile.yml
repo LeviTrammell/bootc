@@ -22,3 +22,28 @@ tasks:
       vars:
         FILE: ./variants/pi/Containerfile
         TAG: pi
+
+  odroid-go-ultra:
+    deps: []
+    cmd:
+      task: build
+      vars:
+        FILE: ./variants/odroid-go-ultra/Containerfile
+        TAG: odroid-go-ultra
+
+  odroid-go-ultra-uboot:
+    desc: Build U-Boot bootloader container for Odroid Go Ultra
+    cmd:
+      task: build
+      vars:
+        FILE: ./variants/odroid-go-ultra/Containerfile.uboot
+        TAG: odroid-go-ultra-uboot
+
+  odroid-go-ultra-simple:
+    desc: Build Odroid Go Ultra using pre-built U-Boot container
+    deps: [odroid-go-ultra-uboot]
+    cmd:
+      task: build
+      vars:
+        FILE: ./variants/odroid-go-ultra/Containerfile.simple
+        TAG: odroid-go-ultra

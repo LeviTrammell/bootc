@@ -1,0 +1,84 @@
+# U-Boot builder for Odroid Go Ultra (Amlogic S922X)
+# This container only builds and outputs the bootloader
+FROM docker.io/library/ubuntu:22.04 AS uboot-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc-aarch64-linux-gnu \
+    device-tree-compiler \
+    python3 \
+    python3-dev \
+    python3-setuptools \
+    python3-pyelftools \
+    swig \
+    libssl-dev \
+    libgnutls28-dev \
+    libuuid1 \
+    uuid-dev \
+    git \
+    make \
+    bc \
+    bison \
+    flex \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set build environment
+ENV ARCH=arm64
+ENV CROSS_COMPILE=aarch64-linux-gnu-
+
+# Clone U-Boot source (official U-Boot with S922X support)
+RUN git clone --depth 1 --branch v2025.01 https://github.com/u-boot/u-boot.git /u-boot
+
+WORKDIR /u-boot
+
+# Build U-Boot for Odroid Go Ultra
+RUN make odroid-go-ultra_defconfig || make odroid-n2_defconfig
+RUN make -j$(nproc) all
+
+# Clone amlogic-boot-fip for signing tools and firmware
+RUN git clone --depth 1 https://github.com/LibreELEC/amlogic-boot-fip.git /fip
+
+# Build the final bootloader images using FIP tools
+WORKDIR /fip/odroid-go-ultra
+
+# Build U-Boot following the correct process from g12a.inc
+RUN mkdir -p tmp && \
+    cp /u-boot/u-boot.bin bl33.bin && \
+    ./blx_fix.sh bl30.bin tmp/zero_tmp tmp/bl30_zero.bin bl301.bin tmp/bl301_zero.bin tmp/bl30_new.bin bl30 && \
+    ./blx_fix.sh bl2.bin tmp/zero_tmp tmp/bl2_zero.bin acs.bin tmp/bl21_zero.bin tmp/bl2_new.bin bl2 && \
+    ./aml_encrypt_g12b --bl30sig --input tmp/bl30_new.bin --output tmp/bl30_new.bin.g12a.enc --level v3 && \
+    ./aml_encrypt_g12b --bl3sig --input tmp/bl30_new.bin.g12a.enc --output tmp/bl30_new.bin.enc --level v3 --type bl30 && \
+    ./aml_encrypt_g12b --bl3sig --input bl31.img --output tmp/bl31.img.enc --level v3 --type bl31 && \
+    ./aml_encrypt_g12b --bl3sig --input bl33.bin --compress lz4 --output tmp/bl33.bin.enc --level v3 --type bl33 && \
+    ./aml_encrypt_g12b --bl2sig --input tmp/bl2_new.bin --output tmp/bl2.n.bin.sig --level v2 && \
+    ./aml_encrypt_g12b --bootmk --output u-boot.bin \
+        --bl2 tmp/bl2.n.bin.sig --bl30 tmp/bl30_new.bin.enc --bl31 tmp/bl31.img.enc --bl33 tmp/bl33.bin.enc \
+        --ddrfw1 ddr4_1d.fw --ddrfw2 ddr4_2d.fw --ddrfw3 ddr3_1d.fw --ddrfw4 piei.fw \
+        --ddrfw5 lpddr4_1d.fw --ddrfw6 lpddr4_2d.fw --ddrfw7 diag_lpddr4.fw --ddrfw8 aml_ddr.fw --level v3
+
+# Create the SD card bootloader image and organize outputs
+RUN dd if=u-boot.bin of=u-boot.bin.sd.bin bs=512 skip=1 && \
+    mkdir -p /output && \
+    cp u-boot.bin.sd.bin /output/ && \
+    cp /u-boot/u-boot.bin /output/u-boot-raw.bin && \
+    cp /u-boot/dts/upstream/src/arm64/amlogic/meson-g12b-odroid-go-ultra.dtb /output/ 2>/dev/null || \
+    cp /u-boot/arch/arm/dts/meson-g12b-odroid-n2.dtb /output/meson-g12b-odroid-go-ultra.dtb
+
+# Create metadata about the bootloader
+RUN echo "Odroid Go Ultra U-Boot" > /output/README.txt && \
+    echo "Version: v2025.01" >> /output/README.txt && \
+    echo "Built: $(date)" >> /output/README.txt && \
+    echo "" >> /output/README.txt && \
+    echo "Files:" >> /output/README.txt && \
+    echo "  u-boot.bin.sd.bin - Signed bootloader for SD/eMMC (install at 1MB offset)" >> /output/README.txt && \
+    echo "  u-boot-raw.bin - Raw U-Boot binary" >> /output/README.txt && \
+    echo "  meson-g12b-odroid-go-ultra.dtb - Device tree blob" >> /output/README.txt && \
+    echo "" >> /output/README.txt && \
+    echo "Installation:" >> /output/README.txt && \
+    echo "  dd if=u-boot.bin.sd.bin of=/dev/mmcblk0 bs=512 seek=2048 conv=notrunc" >> /output/README.txt
+
+# Final stage - just the outputs
+FROM scratch
+COPY --from=uboot-builder /output/ /

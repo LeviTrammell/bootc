@@ -1,0 +1,216 @@
+# Simplified Odroid Go Ultra bootc container using pre-built U-Boot
+ARG FEDORA_MAJOR_VERSION=42
+ARG UBOOT_IMAGE=ghcr.io/levitrammell/odroid-go-ultra-uboot:latest
+
+# Get bootloader artifacts from dedicated U-Boot container
+FROM ${UBOOT_IMAGE} AS bootloader
+
+# Main container build
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
+
+# Copy bootloader artifacts from builder
+COPY --from=bootloader /u-boot.bin.sd.bin /tmp/u-boot.bin.sd.bin
+COPY --from=bootloader /u-boot-raw.bin /tmp/u-boot-raw.bin
+COPY --from=bootloader /meson-g12b-odroid-go-ultra.dtb /tmp/meson-g12b-odroid-go-ultra.dtb
+
+# Set up passwordless sudo for wheel group
+RUN echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-passwordless-sudo
+
+# Install necessary packages
+RUN dnf install -y \
+    uboot-tools \
+    arm-image-installer \
+    mesa-dri-drivers \
+    mesa-vulkan-drivers \
+    mesa-libEGL \
+    mesa-libGL \
+    mesa-libgbm \
+    libdrm \
+    cloud-utils-growpart \
+    gdisk \
+    e2fsprogs \
+    dosfstools \
+    plymouth \
+    && dnf clean all
+
+# Set up firmware directories following proposed bootupd structure
+RUN mkdir -p /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI && \
+    mkdir -p /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot
+
+# Install bootloader files to appropriate locations
+RUN cp /tmp/u-boot-raw.bin /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI/u-boot.bin && \
+    cp /tmp/meson-g12b-odroid-go-ultra.dtb /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI/ && \
+    cp /tmp/u-boot.bin.sd.bin /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot/
+
+# Create metadata JSON files
+RUN cat > /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI.json <<'EOF'
+{
+  "board": "odroid-go-ultra",
+  "architecture": "aarch64",
+  "version": "1.0.0",
+  "files": {
+    "u-boot.bin": {
+      "type": "bootloader",
+      "target": "/boot/efi/"
+    },
+    "meson-g12b-odroid-go-ultra.dtb": {
+      "type": "devicetree",
+      "target": "/boot/efi/dtb/"
+    }
+  }
+}
+EOF
+
+RUN cat > /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot.json <<'EOF'
+{
+  "board": "odroid-go-ultra",
+  "architecture": "aarch64",
+  "soc": "s922x",
+  "version": "1.0.0",
+  "files": [
+    {
+      "name": "u-boot.bin.sd.bin",
+      "path": "boot/u-boot.bin.sd.bin",
+      "target": {
+        "type": "offset",
+        "device": "root",
+        "offset": 1,
+        "unit": "MiB"
+      },
+      "description": "Amlogic S922X Signed U-Boot"
+    }
+  ]
+}
+EOF
+
+# Enable SSH
+RUN systemctl enable sshd
+
+# Gaming handheld specific configurations
+RUN mkdir -p /etc/udev/rules.d && \
+    cat > /etc/udev/rules.d/99-odroid-go-ultra-input.rules <<'EOF'
+# Odroid Go Ultra gamepad input rules
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="odroid-go-ultra-joypad", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="js*", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+EOF
+
+# Power management service
+RUN cat > /etc/systemd/system/odroid-power-management.service <<'EOF'
+[Unit]
+Description=Odroid Go Ultra Power Management
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable odroid-power-management.service
+
+# Display test service
+RUN cat > /etc/systemd/system/display-test.service <<'EOF'
+[Unit]
+Description=Display Test on Boot
+After=multi-user.target plymouth-quit.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/display-test.sh
+RemainAfterExit=yes
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create display test script
+RUN cat > /usr/local/bin/display-test.sh <<'EOF'
+#!/bin/bash
+clear > /dev/tty1
+echo -e "\033[1;32m" > /dev/tty1
+echo "================================" > /dev/tty1
+echo "  ODROID GO ULTRA BOOT SUCCESS " > /dev/tty1
+echo "================================" > /dev/tty1
+echo -e "\033[0m" > /dev/tty1
+echo "" > /dev/tty1
+echo -e "\033[1;34mSystem Information:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+uname -a > /dev/tty1
+echo "" > /dev/tty1
+echo -e "\033[1;34mNetwork Interfaces:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+ip -4 addr show | grep -E "inet|^[0-9]+:" | sed 's/^/  /' > /dev/tty1
+echo "" > /dev/tty1
+echo -e "\033[1;34mDisk Usage:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+df -h / | tail -n1 | awk '{print "  Root: " $3 " / " $2 " (" $5 ")"}' > /dev/tty1
+echo "" > /dev/tty1
+echo -e "\033[1;32mSystem Ready!\033[0m" > /dev/tty1
+echo "SSH access available at above IP addresses" > /dev/tty1
+EOF
+
+RUN chmod +x /usr/local/bin/display-test.sh && \
+    systemctl enable display-test.service
+
+# Kernel modules for Amlogic S922X
+RUN echo -e "meson_drm\npanfrost\nmeson_gxl\ngpio_keys\nmeson_ir" > /etc/modules-load.d/amlogic.conf
+
+# Create extlinux configuration
+RUN mkdir -p /boot/extlinux && \
+    cat > /boot/extlinux/extlinux.conf <<'EOF'
+default fedora
+timeout 10
+
+label fedora
+    kernel /vmlinuz
+    fdt /dtb/meson-g12b-odroid-go-ultra.dtb
+    append root=UUID=ROOT_UUID rw rootwait console=ttyAML0,115200n8 console=tty1 selinux=0 plymouth.enable=0 systemd.unified_cgroup_hierarchy=1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1
+EOF
+
+# First boot partition resize
+RUN cat > /usr/lib/systemd/system/growfs.service <<'EOF'
+[Unit]
+Description=Grow root partition on first boot
+Before=local-fs-pre.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'growpart /dev/mmcblk0 2 && resize2fs /dev/mmcblk0p2'
+StandardOutput=journal
+
+[Install]
+WantedBy=sysinit.target
+EOF
+
+RUN systemctl enable growfs.service
+
+# Bootloader installation helper
+RUN cat > /usr/local/bin/install-bootloader <<'EOF'
+#!/bin/bash
+DEVICE=$1
+if [ -z "$DEVICE" ]; then
+    echo "Usage: $0 <device>"
+    echo "Example: $0 /dev/mmcblk0"
+    exit 1
+fi
+echo "Installing bootloader to $DEVICE..."
+dd if=/usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot/u-boot.bin.sd.bin of=$DEVICE conv=fsync,notrunc bs=512 seek=2048
+echo "Bootloader installation complete!"
+EOF
+
+RUN chmod +x /usr/local/bin/install-bootloader
+
+# Clean up temporary files
+RUN rm -f /tmp/*.bin /tmp/*.dtb
+
+# Run bootc lint
+RUN bootc container lint || true

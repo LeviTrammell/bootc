@@ -1,0 +1,308 @@
+# Multi-stage build for Odroid Go Ultra bootc container
+ARG FEDORA_MAJOR_VERSION=42
+
+# Stage 1: Build U-Boot for Amlogic S922X
+FROM docker.io/library/ubuntu:22.04 AS uboot-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc-aarch64-linux-gnu \
+    device-tree-compiler \
+    python3 \
+    python3-dev \
+    python3-setuptools \
+    python3-pyelftools \
+    swig \
+    libssl-dev \
+    libgnutls28-dev \
+    libuuid1 \
+    uuid-dev \
+    git \
+    make \
+    bc \
+    bison \
+    flex \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set build environment
+ENV ARCH=arm64
+ENV CROSS_COMPILE=aarch64-linux-gnu-
+
+# Clone U-Boot source (official U-Boot with S922X support)
+RUN git clone --depth 1 --branch v2025.01 https://github.com/u-boot/u-boot.git /u-boot
+
+WORKDIR /u-boot
+
+# Build U-Boot for Odroid Go Ultra
+RUN make odroid-go-ultra_defconfig || make odroid-n2_defconfig
+RUN make -j$(nproc) all
+
+# Clone amlogic-boot-fip for signing tools and firmware
+RUN git clone --depth 1 https://github.com/LibreELEC/amlogic-boot-fip.git /fip
+
+# Build the final bootloader images using FIP tools
+WORKDIR /fip/odroid-go-ultra
+
+# Build U-Boot following the correct process from g12a.inc
+RUN mkdir -p tmp && \
+    cp /u-boot/u-boot.bin bl33.bin && \
+    ./blx_fix.sh bl30.bin tmp/zero_tmp tmp/bl30_zero.bin bl301.bin tmp/bl301_zero.bin tmp/bl30_new.bin bl30 && \
+    ./blx_fix.sh bl2.bin tmp/zero_tmp tmp/bl2_zero.bin acs.bin tmp/bl21_zero.bin tmp/bl2_new.bin bl2 && \
+    ./aml_encrypt_g12b --bl30sig --input tmp/bl30_new.bin --output tmp/bl30_new.bin.g12a.enc --level v3 && \
+    ./aml_encrypt_g12b --bl3sig --input tmp/bl30_new.bin.g12a.enc --output tmp/bl30_new.bin.enc --level v3 --type bl30 && \
+    ./aml_encrypt_g12b --bl3sig --input bl31.img --output tmp/bl31.img.enc --level v3 --type bl31 && \
+    ./aml_encrypt_g12b --bl3sig --input bl33.bin --compress lz4 --output tmp/bl33.bin.enc --level v3 --type bl33 && \
+    ./aml_encrypt_g12b --bl2sig --input tmp/bl2_new.bin --output tmp/bl2.n.bin.sig --level v2 && \
+    ./aml_encrypt_g12b --bootmk --output u-boot.bin \
+        --bl2 tmp/bl2.n.bin.sig --bl30 tmp/bl30_new.bin.enc --bl31 tmp/bl31.img.enc --bl33 tmp/bl33.bin.enc \
+        --ddrfw1 ddr4_1d.fw --ddrfw2 ddr4_2d.fw --ddrfw3 ddr3_1d.fw --ddrfw4 piei.fw \
+        --ddrfw5 lpddr4_1d.fw --ddrfw6 lpddr4_2d.fw --ddrfw7 diag_lpddr4.fw --ddrfw8 aml_ddr.fw --level v3
+
+# Create the SD card bootloader image  
+RUN dd if=u-boot.bin of=u-boot.bin.sd.bin bs=512 skip=1 && \
+    cp u-boot.bin.sd.bin /tmp/u-boot.bin.sd.bin
+
+# Stage 2: Main container build
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
+
+# Copy U-Boot artifacts from builder stage
+COPY --from=uboot-builder /tmp/u-boot.bin.sd.bin /tmp/uboot-artifacts/
+COPY --from=uboot-builder /u-boot/u-boot.bin /tmp/uboot-artifacts/
+COPY --from=uboot-builder /u-boot/dts/upstream/src/arm64/amlogic/meson-g12b-odroid-go-ultra.dtb /tmp/uboot-artifacts/
+
+# Set up passwordless sudo for wheel group
+RUN echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-passwordless-sudo
+
+# Install necessary packages
+RUN dnf install -y \
+    uboot-tools \
+    arm-image-installer \
+    mesa-dri-drivers \
+    mesa-vulkan-drivers \
+    mesa-libEGL \
+    mesa-libGL \
+    mesa-libgbm \
+    libdrm \
+    cloud-utils-growpart \
+    gdisk \
+    e2fsprogs \
+    dosfstools \
+    plymouth \
+    && dnf clean all
+
+# Set up firmware directories following proposed bootupd structure
+RUN mkdir -p /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI && \
+    mkdir -p /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot
+
+# Copy U-Boot files to appropriate locations
+RUN cp /tmp/uboot-artifacts/u-boot.bin /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI/ && \
+    cp /tmp/uboot-artifacts/meson-g12b-odroid-go-ultra.dtb /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI/ && \
+    cp /tmp/uboot-artifacts/u-boot.bin.sd.bin /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot/
+
+# Create metadata JSON files inline
+RUN cat > /usr/lib/efi-firmware/odroid-go-ultra/1.0.0/EFI.json <<'EOF'
+{
+  "board": "odroid-go-ultra",
+  "architecture": "aarch64",
+  "version": "1.0.0",
+  "files": {
+    "u-boot.bin": {
+      "type": "bootloader",
+      "target": "/boot/efi/"
+    },
+    "meson-g12b-odroid-go-ultra.dtb": {
+      "type": "devicetree",
+      "target": "/boot/efi/dtb/"
+    }
+  }
+}
+EOF
+
+RUN cat > /usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot.json <<'EOF'
+{
+  "board": "odroid-go-ultra",
+  "architecture": "aarch64",
+  "soc": "s922x",
+  "version": "1.0.0",
+  "files": [
+    {
+      "name": "u-boot.bin.sd.bin",
+      "path": "boot/u-boot.bin.sd.bin",
+      "target": {
+        "type": "offset",
+        "device": "root",
+        "offset": 1,
+        "unit": "MiB"
+      },
+      "description": "Amlogic S922X Signed U-Boot"
+    }
+  ]
+}
+EOF
+
+# Enable SSH
+RUN systemctl enable sshd
+
+# Gaming handheld specific configurations
+# Create basic input configuration for gamepad
+RUN mkdir -p /etc/udev/rules.d && \
+    cat > /etc/udev/rules.d/99-odroid-go-ultra-input.rules <<'EOF'
+# Odroid Go Ultra gamepad input rules
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="odroid-go-ultra-joypad", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="js*", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+EOF
+
+# Power management service for battery device
+RUN cat > /etc/systemd/system/odroid-power-management.service <<'EOF'
+[Unit]
+Description=Odroid Go Ultra Power Management
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable odroid-power-management.service
+
+# Display test service to show boot success
+RUN cat > /etc/systemd/system/display-test.service <<'EOF'
+[Unit]
+Description=Display Test on Boot
+After=multi-user.target plymouth-quit.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/display-test.sh
+RemainAfterExit=yes
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create display test script
+RUN cat > /usr/local/bin/display-test.sh <<'EOF'
+#!/bin/bash
+# Display test script for Odroid Go Ultra
+# Shows system info on the display to verify boot
+
+# Clear screen and set up display
+clear > /dev/tty1
+
+# Display boot success message
+echo -e "\033[1;32m" > /dev/tty1
+echo "================================" > /dev/tty1
+echo "  ODROID GO ULTRA BOOT SUCCESS " > /dev/tty1
+echo "================================" > /dev/tty1
+echo -e "\033[0m" > /dev/tty1
+echo "" > /dev/tty1
+
+# Show system information
+echo -e "\033[1;34mSystem Information:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+uname -a > /dev/tty1
+echo "" > /dev/tty1
+
+# Show IP addresses
+echo -e "\033[1;34mNetwork Interfaces:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+ip -4 addr show | grep -E "inet|^[0-9]+:" | sed 's/^/  /' > /dev/tty1
+echo "" > /dev/tty1
+
+# Show disk usage
+echo -e "\033[1;34mDisk Usage:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+df -h / | tail -n1 | awk '{print "  Root: " $3 " / " $2 " (" $5 ")"}' > /dev/tty1
+echo "" > /dev/tty1
+
+# Show CPU info
+echo -e "\033[1;34mCPU Information:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | sed 's/^/  CPU:/' > /dev/tty1
+echo "  Cores: $(nproc)" > /dev/tty1
+echo "" > /dev/tty1
+
+# Show memory info
+echo -e "\033[1;34mMemory:\033[0m" > /dev/tty1
+echo "-------------------" > /dev/tty1
+free -h | grep Mem | awk '{print "  Total: " $2 "  Used: " $3 "  Free: " $4}' > /dev/tty1
+echo "" > /dev/tty1
+
+echo -e "\033[1;32mSystem Ready!\033[0m" > /dev/tty1
+echo "SSH access available at above IP addresses" > /dev/tty1
+EOF
+
+RUN chmod +x /usr/local/bin/display-test.sh
+
+RUN systemctl enable display-test.service
+
+# Kernel modules for Amlogic S922X
+RUN echo -e "meson_drm\npanfrost\nmeson_gxl\ngpio_keys\nmeson_ir" > /etc/modules-load.d/amlogic.conf
+
+# Create extlinux configuration for U-Boot
+RUN mkdir -p /boot/extlinux && \
+    cat > /boot/extlinux/extlinux.conf <<'EOF'
+default fedora
+timeout 10
+
+label fedora
+    kernel /vmlinuz
+    fdt /dtb/meson-g12b-odroid-go-ultra.dtb
+    append root=UUID=ROOT_UUID rw rootwait console=ttyAML0,115200n8 console=tty1 selinux=0 plymouth.enable=0 systemd.unified_cgroup_hierarchy=1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1
+EOF
+
+# First boot partition resize setup
+RUN cat > /usr/lib/systemd/system/growfs.service <<'EOF'
+[Unit]
+Description=Grow root partition on first boot
+Before=local-fs-pre.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'growpart /dev/mmcblk0 2 && resize2fs /dev/mmcblk0p2'
+StandardOutput=journal
+
+[Install]
+WantedBy=sysinit.target
+EOF
+
+RUN systemctl enable growfs.service
+
+# Create a script to help with bootloader installation
+RUN cat > /usr/local/bin/install-bootloader <<'EOF'
+#!/bin/bash
+# Helper script to install U-Boot to disk
+# Usage: install-bootloader /dev/mmcblk0
+
+DEVICE=$1
+
+if [ -z "$DEVICE" ]; then
+    echo "Usage: $0 <device>"
+    echo "Example: $0 /dev/mmcblk0"
+    exit 1
+fi
+
+echo "Installing bootloader to $DEVICE..."
+dd if=/usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot/u-boot.bin.sd.bin of=$DEVICE conv=fsync,notrunc bs=512 seek=2048
+echo "Bootloader installation complete!"
+EOF
+
+RUN chmod +x /usr/local/bin/install-bootloader
+
+# Clean up
+RUN rm -rf /tmp/uboot-artifacts
+
+# Run bootc lint
+RUN bootc container lint || true

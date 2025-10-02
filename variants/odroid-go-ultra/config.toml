@@ -1,0 +1,7 @@
+[[customizations.user]]
+name = "levi"
+key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDuOzvkmG+6bfrQ0YC04MnU3LUHiDYb5P4oyyx4TMbH1UJzvLYLstufefvVXkmOumgQ1mrIKDc0yq6rOt8Z5V2wGIHXLyqhAosu0HeZ6ZoO00pdzTVbJ67DtEoj6Fq/7pXKxdvuMVuUYJqYCqz20nt3DPYAVIg0ba5EFg1U5JKIFoUo6IOqDQSAjAPSnwmnQpqnt03u5zJWxj6ULAF0PkJsAN9/wlw1KCtdtI6uxTSo49dTamesr4XVQIWLMt6+TrI3ltt9AQ4NtbU/f3wuJa0+NgSkt06Vg0t++VALYuEZDFOCQMZNT6XSt0nK/WV71/KyGWOYXsRGsLYyhqgrP1XNvElFIqS0E6a3vNAEa0kpuVzXbqV96rlrB7Rv5HAcao+4yIPmon6pJ0QBl1gJotpjgRr3jfj1NBcQU8M0ry9b8sA0r2I98WDJfpim50lT2sLqk+E5czvtQlKNT/z0pKgNNkQFPOmLuh3ObJBWM4M8pwUSBhkffcOpNg8FNE3+ST+tzoSOi9rzdmcZFw/7Ul/eHjT5CpfVhNrX+aWFIue/VXDTp11Ha/y4NWjxjBuzmJ879fVTiRBqj/LhZzQ1B7RUGqqAV/RlE3DOv9YGVsgDszuHVONnW7YOGGGqC+FCkTeNtHo6x0IQx3KIy7vU4VsIAr0CUctALxe7K0Rh6UvkGw== davidtrammell@Davids-MacBook-Pro.local"
+groups = ["wheel"]
+
+[customizations.kernel]
+append = "video=HDMI-A-1:854x480@60 drm.edid_firmware=HDMI-A-1:edid/854x480.bin"
