@@ -1,0 +1,80 @@
+# Test variant for Raspberry Pi using bootupd PR #935
+# Tests the extend-payload-to-esp approach instead of bootupctl shim
+ARG FEDORA_MAJOR_VERSION=43
+
+# Stage 1: Build bootupd from PR #935
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION} AS bootupd-builder
+
+RUN dnf install -y \
+    make \
+    cargo \
+    rust \
+    glib2-devel \
+    openssl-devel \
+    ostree-devel \
+    git \
+    && dnf clean all
+
+# Clone PR #935 branch
+RUN git clone -b firmware-copy https://github.com/say-paul/bootupd.git /build/bootupd
+
+WORKDIR /build/bootupd
+
+# Build bootupd (set CARGO_HOME to avoid cache conflicts)
+ENV CARGO_HOME=/build/.cargo
+RUN make && make install-all DESTDIR=/out
+
+# Stage 2: Main Pi image with PR #935 bootupd
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
+
+# Copy PR #935 bootupd over the default one
+COPY --from=bootupd-builder /out/ /
+
+# Set up passwordless sudo
+COPY ./variants/pi/files/wheel-passwordless-sudo /etc/sudoers.d/wheel-passwordless-sudo
+
+# Run common installation script
+COPY ./scripts/install-common.sh /tmp
+RUN /tmp/install-common.sh
+
+# Install firmware and u-boot packages
+RUN dnf install -y bcm2711-firmware uboot-images-armv8 && \
+    dnf clean all
+
+# Use PR #935's extend-payload-to-esp command to stage firmware
+# First, extend the bcm2711-firmware files from /boot/efi
+RUN bootupctl backend extend-payload-to-esp /boot/efi
+
+# Second, extend the u-boot binary from /usr/share/uboot/rpi_arm64
+# Note: We need to copy u-boot.bin to expected name first
+RUN cp -P /usr/share/uboot/rpi_arm64/u-boot.bin /usr/share/uboot/rpi_arm64/rpi-u-boot.bin || true
+RUN bootupctl backend extend-payload-to-esp /usr/share/uboot/rpi_arm64
+
+# Verify the staging worked
+RUN echo "=== Checking staged firmware ===" && \
+    ls -la /usr/lib/efi/firmware/ || echo "No /usr/lib/efi/firmware directory" && \
+    find /usr/lib/efi -type f 2>/dev/null || echo "No files in /usr/lib/efi"
+
+# Enable SSH
+RUN systemctl enable sshd
+
+# USB gadget networking setup
+COPY ./variants/pi/files/etc/systemd/system/usb-gadget.service /etc/systemd/system/usb-gadget.service
+COPY ./variants/pi/files/etc/systemd/system/dnsmasq-usb0.service /etc/systemd/system/dnsmasq-usb0.service
+COPY ./variants/pi/files/etc/modules-load.d/gadget.conf /etc/modules-load.d/gadget.conf
+COPY ./variants/pi/files/etc/usb-gadgets/net-ecm /etc/usb-gadgets/net-ecm
+COPY ./variants/pi/files/usr/local/bin/usb-gadget.sh /usr/local/bin/usb-gadget.sh
+COPY ./variants/pi/files/etc/dnsmasq.d/usb-gadget /etc/dnsmasq.d/usb-gadget
+COPY ./variants/pi/scripts/setup-usb-gadget.sh /tmp
+RUN /tmp/setup-usb-gadget.sh
+
+# First boot partition resize
+COPY ./variants/pi/files/usr/lib/dracut/modules.d/99growfs/growfs.sh /usr/lib/dracut/modules.d/99growfs/growfs.sh
+COPY ./variants/pi/files/usr/lib/dracut/modules.d/99growfs/module-setup.sh /usr/lib/dracut/modules.d/99growfs/module-setup.sh
+COPY ./variants/pi/scripts/install-first-boot-resize.sh /tmp
+RUN /tmp/install-first-boot-resize.sh
+
+# NOTE: No bootupctl shim needed! PR #935 should handle firmware installation automatically
+# during 'bootupd backend install' and 'bootupd update'
+
+RUN bootc container lint

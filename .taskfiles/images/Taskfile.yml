@@ -52,3 +52,14 @@ tasks:
     desc: Build complete Odroid Go Ultra image with embedded bootloader
     cmd: ./variants/odroid-go-ultra/scripts/create-full-image.sh {{.BASE_REPO}}/odroid-go-ultra
 
+  pi-pr935:
+    desc: Build Raspberry Pi disk image using bootupd PR #935 (test variant, Fedora 43)
+    cmd:
+      task: bootc-image-builder
+      vars:
+        ARCH: aarch64
+        IMAGE: pi-pr935
+        ROOTFS: ext4
+        OUTDIR: dist/pi-pr935
+        CONFIG: variants/pi-pr935/config.toml
+

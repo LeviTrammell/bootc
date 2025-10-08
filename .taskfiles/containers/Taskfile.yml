@@ -47,3 +47,13 @@ tasks:
       vars:
         FILE: ./variants/odroid-go-ultra/Containerfile.simple
         TAG: odroid-go-ultra
+
+  pi-pr935:
+    desc: Build Raspberry Pi image using bootupd PR #935 (test variant, Fedora 43)
+    deps: []
+    cmd:
+      task: build
+      vars:
+        FILE: ./variants/pi-pr935/Containerfile
+        TAG: pi-pr935
+        FEDORA_MAJOR_VERSION: 43
