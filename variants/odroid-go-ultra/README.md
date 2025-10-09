@@ -1,6 +1,6 @@
 # Odroid Go Ultra Bootc Variant
 
-This variant creates a bootable container image for the Odroid Go Ultra gaming handheld device.
+Fedora bootc image for the Odroid Go Ultra handheld gaming device powered by Amlogic S922X SoC.
 
 ## Hardware Specifications
 - **SoC**: Amlogic S922X (Quad-core Cortex-A73 + Dual-core Cortex-A53)
@@ -9,93 +9,248 @@ This variant creates a bootable container image for the Odroid Go Ultra gaming h
 - **Display**: 5-inch 854×480 MIPI-DSI TFT LCD
 - **Battery**: Li-Polymer 3.7V/4000mAh
 
-## Features
-- Fedora 42-based bootc container
-- U-Boot bootloader built from source
-- Display validation on boot (shows system info)
-- Gamepad input support
-- Power management for battery operation
-- Automatic partition resize on first boot
-- SSH access enabled
+## Architecture
+
+This variant uses a **split build architecture** for clean separation of concerns:
+
+```
+┌───────────────────────────────┐
+│ Containerfile.uboot           │  ← U-Boot builder (Ubuntu 22.04)
+│ - Builds U-Boot v2025.01      │
+│ - Signs with Amlogic FIP      │
+│ - Outputs to scratch          │
+└───────────────────────────────┘
+           ↓
+┌───────────────────────────────┐
+│ Containerfile                 │  ← Fedora bootc image
+│ - Pulls U-Boot artifacts      │
+│ - Installs packages           │
+│ - Configures system           │
+└───────────────────────────────┘
+           ↓
+┌───────────────────────────────┐
+│ bootc-image-builder           │  ← Disk image builder
+│ - Creates partitions          │
+│ - Installs ostree             │
+└───────────────────────────────┘
+           ↓
+┌───────────────────────────────┐
+│ task *-complete               │  ← Post-processing
+│ - Injects bootloader at 1MB   │
+│ - Ready-to-flash image        │
+└───────────────────────────────┘
+```
+
+### Why Split Architecture?
+
+**Fast Iteration:**
+- U-Boot build (30min) is cached and reused
+- Fedora config changes rebuild in minutes
+- No need to rebuild U-Boot for system changes
+
+**Reusability:**
+- Same U-Boot container works for multiple images
+- Can be shared across Amlogic devices (N2+, C4, etc.)
+- Pattern applicable to other ARM SBCs
+
+**Clean Separation:**
+- U-Boot (Ubuntu, cross-compile) isolated from Fedora
+- Bootloader updates independent of system config
+- Easier to debug and maintain
 
 ## Building
 
-### Build the container image:
+### Quick Build (Recommended)
+
 ```bash
-task containers:odroid-go-ultra
+# One command - builds everything and produces flashable image
+task images:odroid-go-ultra-complete
 ```
 
-### Build a bootable disk image (optional):
+Output: `dist/odroid-go-ultra/image/disk.raw` (ready to flash!)
+
+### Step-by-Step Build
+
 ```bash
+# 1. Build U-Boot container (slow ~30min, but cacheable)
+task containers:odroid-go-ultra-uboot
+
+# 2. Build Fedora container (fast, uses U-Boot from step 1)
+task containers:odroid-go-ultra
+
+# 3. Build disk image
 task images:odroid-go-ultra
+
+# 4. Inject bootloader - creates complete flashable image
+task images:odroid-go-ultra-complete
+```
+
+### Development Workflow
+
+**Iterating on system config:**
+```bash
+# Edit Fedora configuration
+vim variants/odroid-go-ultra/Containerfile
+
+# Fast rebuild (skips U-Boot)
+task containers:odroid-go-ultra
+task images:odroid-go-ultra-complete
+```
+
+**Updating U-Boot:**
+```bash
+# Edit U-Boot builder
+vim variants/odroid-go-ultra/Containerfile.uboot
+
+# Rebuild everything
+task containers:odroid-go-ultra-uboot  # Slow
+task containers:odroid-go-ultra
+task images:odroid-go-ultra-complete
 ```
 
 ## Installation
 
-### Method 1: Direct to device (recommended)
+### To eMMC (via Recovery Mode) - Recommended
 
-1. Boot the Odroid Go Ultra into recovery mode or from another OS
-2. Install the bootc container to disk:
+1. Hold **R2 + L2** while powering on
+2. Connect USB-C cable to computer
+3. eMMC appears as USB mass storage
+4. Flash the complete image:
+
 ```bash
-podman run --rm --privileged --pid=host \
-  -v /var/lib/containers:/var/lib/containers \
-  -v /dev:/dev \
-  --security-opt label=type:unconfined_t \
-  ghcr.io/levitrammell/odroid-go-ultra \
-  bootc install to-disk /dev/mmcblk0
+# On Linux
+sudo dd if=dist/odroid-go-ultra/image/disk.raw \
+    of=/dev/sdX \
+    bs=4M \
+    status=progress \
+    conv=fsync
+
+# On macOS
+sudo dd if=dist/odroid-go-ultra/image/disk.raw \
+    of=/dev/rdiskN \
+    bs=4m \
+    status=progress
 ```
 
-3. Install the bootloader (required):
+5. Disconnect and boot!
+
+### To SD Card
+
 ```bash
-podman run --rm --privileged \
-  -v /dev:/dev \
-  --security-opt label=type:unconfined_t \
-  ghcr.io/levitrammell/odroid-go-ultra \
-  /usr/local/bin/install-bootloader /dev/mmcblk0
+# Same command, different device
+sudo dd if=dist/odroid-go-ultra/image/disk.raw \
+    of=/dev/mmcblk0 \
+    bs=4M \
+    status=progress \
+    conv=fsync
 ```
 
-### Method 2: Manual bootloader installation
+## Boot Flow
 
-After running `bootc install to-disk`, manually write the bootloader:
-```bash
-dd if=/usr/lib/boot-firmware/odroid-go-ultra/1.0.0/boot/u-boot.bin.sd.bin \
-   of=/dev/mmcblk0 conv=fsync,notrunc bs=512 seek=2048
+```
+1. Amlogic BootROM (in SoC)
+   └─ Reads bootloader from offset 1MB
+
+2. U-Boot (u-boot.bin.sd.bin at 1MB)
+   ├─ ARM Trusted Firmware (bl2, bl30, bl31)
+   ├─ U-Boot (bl33)
+   └─ DDR training firmware
+
+3. U-Boot reads /boot/extlinux/extlinux.conf
+   ├─ Loads /vmlinuz (kernel)
+   └─ Loads /dtb/meson-g12b-odroid-go-ultra.dtb
+
+4. Boot Fedora
 ```
 
-## Display Validation
+## Features
 
-On successful boot, the device display will show:
-- Boot success message in green
-- System information (kernel version, hostname)
-- Network interfaces and IP addresses
-- Disk usage
-- CPU and memory information
-- "System Ready!" message
+**Display:**
+- 5" 854x480 LCD with custom EDID
+- Boot success message shows system info
+- Confirms network connectivity
 
-This confirms the device has booted successfully and is accessible via SSH.
+**Storage:**
+- Auto-detects eMMC (`/dev/mmcblk1`) or SD (`/dev/mmcblk0`)
+- Automatic partition resize on first boot
+- Works on both storage types
+
+**Input:**
+- Gamepad controls (no keyboard)
+- udev rules for input devices
+- All interactive tools use `-f/--force` flags
+
+**Power:**
+- CPU governor: `ondemand`
+- Battery management service
+- Optimized for portable use
+
+**Graphics:**
+- Panfrost (Mali-G52) GPU
+- Mesa Vulkan/OpenGL drivers
+- DRM/KMS support
 
 ## SSH Access
 
-Default user configuration is set in `config.toml`. SSH is enabled by default.
-Connect using the IP address shown on the display.
+Default user configured in `config.toml`:
+
+```bash
+# IP shown on display
+ssh levi@<ip-address>
+```
 
 ## Troubleshooting
 
-### No display output
-- Check U-Boot configuration and device tree
-- Verify display driver modules are loaded: `lsmod | grep meson`
-- Check kernel parameters in `/boot/extlinux/extlinux.conf`
+### Image won't boot
 
-### Input not working
-- Check udev rules: `ls /etc/udev/rules.d/`
-- Verify input devices: `ls /dev/input/`
-- Test with `evtest` tool
+**Verify bootloader injection:**
+```bash
+dd if=dist/odroid-go-ultra/image/disk.raw bs=512 skip=2048 count=1 | xxd | head
+# Should show FIP header, not zeros
+```
 
-### Boot issues
-- Connect serial console to UART pins
-- Check U-Boot output at 115200 baud
-- Verify bootloader installation at correct offset
+**Re-flash in recovery mode:**
+- Recovery mode always works
+- Can't brick the device
 
-## Future Improvements
+### Can't enter recovery mode
 
-Once bootupd implements board-specific firmware support (issue #959), the manual bootloader installation step will be automated.
+- Hold **R2 + L2** *before* powering on
+- Keep holding 5-10 seconds
+- LED should indicate recovery
+
+### Partition won't resize
+
+```bash
+# Check logs
+journalctl -u growfs.service
+
+# Manual resize
+sudo growpart /dev/mmcblk1 2
+sudo resize2fs /dev/mmcblk1p2
+```
+
+## Files
+
+- `Containerfile` - Main Fedora image (uses U-Boot container)
+- `Containerfile.uboot` - U-Boot builder (Ubuntu, outputs scratch)
+- `config.toml` - User config, kernel args
+
+## Related Devices
+
+This architecture works for other Amlogic devices:
+- Odroid N2/N2+
+- Odroid C4
+- Generic S905X/S922X devices
+
+Changes needed:
+- Device tree (`.dtb`)
+- U-Boot defconfig
+- Display configuration
+
+## References
+
+- [U-Boot Amlogic Boot Flow](https://docs.u-boot.org/en/latest/board/amlogic/boot-flow.html)
+- [LibreELEC FIP Tools](https://github.com/LibreELEC/amlogic-boot-fip)
+- [Odroid Go Ultra Wiki](https://wiki.odroid.com/odroid_go_ultra/)
+- [Fedora bootc](https://docs.fedoraproject.org/en-US/bootc/)

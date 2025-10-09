@@ -74,7 +74,4 @@ COPY ./variants/pi/files/usr/lib/dracut/modules.d/99growfs/module-setup.sh /usr/
 COPY ./variants/pi/scripts/install-first-boot-resize.sh /tmp
 RUN /tmp/install-first-boot-resize.sh
 
-# NOTE: No bootupctl shim needed! PR #935 should handle firmware installation automatically
-# during 'bootupd backend install' and 'bootupd update'
-
 RUN bootc container lint

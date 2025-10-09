@@ -48,9 +48,19 @@ tasks:
         CONFIG: variants/odroid-go-ultra/config.toml
 
   odroid-go-ultra-complete:
+    desc: Build complete OGU image with bootloader injected (ready to flash)
     deps: [odroid-go-ultra]
-    desc: Build complete Odroid Go Ultra image with embedded bootloader
-    cmd: ./variants/odroid-go-ultra/scripts/create-full-image.sh {{.BASE_REPO}}/odroid-go-ultra
+    cmds:
+      - echo "Extracting bootloader from U-Boot container..."
+      - mkdir -p /tmp/ogu-bootloader
+      - cmd: |
+          CONTAINER=$(podman create {{.BASE_REPO}}/odroid-go-ultra-uboot)
+          podman cp $CONTAINER:/u-boot.bin.sd.bin /tmp/ogu-bootloader/u-boot.bin.sd.bin
+          podman rm $CONTAINER
+      - echo "Injecting bootloader at 1MB offset (sector 2048)..."
+      - dd if=/tmp/ogu-bootloader/u-boot.bin.sd.bin of=dist/odroid-go-ultra/image/disk.raw conv=notrunc bs=512 seek=2048 status=progress
+      - rm -rf /tmp/ogu-bootloader
+      - echo "Complete flashable image ready at dist/odroid-go-ultra/image/disk.raw"
 
   pi-pr935:
     desc: Build Raspberry Pi disk image using bootupd PR #935 (test variant, Fedora 43)
