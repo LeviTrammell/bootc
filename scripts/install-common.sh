@@ -16,6 +16,8 @@ dnf install -y --best \
   podman-remote \
   openssh-server \
   sshfs \
-  qemu-img
+  qemu-img \
+  NetworkManager-wifi \
+  wpa_supplicant
 
 dnf clean all

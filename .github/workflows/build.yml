@@ -28,10 +28,10 @@ jobs:
       image: pi
       arch: linux/arm64
 
-  phone:
-    name: phone
+  pi-pr935:
+    name: pi-pr935
     uses: ./.github/workflows/build-image.yml
     secrets: inherit
     with:
-      image: phone
+      image: pi-pr935
       arch: linux/arm64
