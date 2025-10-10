@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# Wrapper for global task runner
+exec task --taskfile /usr/local/share/global-tasks/Taskfile.yml "$@"

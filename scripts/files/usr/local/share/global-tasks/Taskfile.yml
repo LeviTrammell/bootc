@@ -1,0 +1,13 @@
+version: '3'
+
+tasks:
+  init-user-shell:
+    desc: Initialize shell environment with zsh, oh-my-zsh, zoxide, and zellij
+    cmds:
+      - bash {{.TASKFILE_DIR}}/scripts/init-user-shell.sh
+
+  default:
+    desc: List all available global tasks
+    cmds:
+      - task --list-all
+    silent: true
