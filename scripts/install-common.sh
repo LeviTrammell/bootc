@@ -18,6 +18,8 @@ dnf install -y --best \
   sshfs \
   qemu-img \
   NetworkManager-wifi \
-  wpa_supplicant
+  wpa_supplicant \
+  fuse-overlayfs \
+  e2fsprogs
 
 dnf clean all

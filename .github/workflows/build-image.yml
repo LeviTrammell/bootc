@@ -9,7 +9,7 @@ on:
       fedoraVersionsJson:
         description: fedora major versions to build
         type: string
-        default: '[42]'
+        default: '[43]'
       arch:
         description: architecture to build
         type: string
@@ -22,7 +22,7 @@ on:
       fedoraVersionsJson:
         description: fedora major versions to build
         type: string
-        default: '[42]'
+        default: '[43]'
       arch:
         description: architecture to build
         type: string
@@ -43,7 +43,7 @@ jobs:
       matrix:
         fedora_major_version: ${{ fromJson(inputs.fedoraVersionsJson) }}
         include:
-          - fedora_major_version: 42
+          - fedora_major_version: 43
             is_latest: true
 
     steps:
