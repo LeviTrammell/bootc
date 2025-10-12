@@ -17,9 +17,6 @@ dnf install -y --best \
   openssh-server \
   sshfs \
   qemu-img \
-  NetworkManager-wifi \
-  wpa_supplicant \
-  fuse-overlayfs \
-  e2fsprogs
+  policycoreutils-python-utils
 
 dnf clean all
