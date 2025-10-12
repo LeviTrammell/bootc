@@ -13,7 +13,6 @@ dnf install -y --best \
   wl-clipboard \
   zsh \
   zoxide \
-  zellij \
   go-task \
   podman \
   podman-remote \
