@@ -12,6 +12,9 @@ dnf install -y --best \
   wget \
   wl-clipboard \
   zsh \
+  zoxide \
+  zellij \
+  go-task \
   podman \
   podman-remote \
   openssh-server \
