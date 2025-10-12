@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-# Create root home directory if it doesn't exist
-mkdir -p /root
+# Ensure root home directory exists and has correct permissions
+mkdir -p /root 2>/dev/null || true
 
 # Install oh-my-zsh for root
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
