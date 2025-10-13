@@ -19,6 +19,7 @@ dnf install -y --best \
   openssh-server \
   sshfs \
   qemu-img \
-  policycoreutils-python-utils
+  policycoreutils-python-utils \
+  NetworkManager-wifi
 
 dnf clean all
