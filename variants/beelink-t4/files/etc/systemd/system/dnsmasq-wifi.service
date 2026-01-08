@@ -1,0 +1,12 @@
+[Unit]
+Description=DHCP/DNS for WiFi AP
+After=wifi-ap.service
+Requires=wifi-ap.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq -k -C /etc/dnsmasq.d/wifi-ap.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -73,3 +73,15 @@ tasks:
         OUTDIR: dist/pi-pr935
         CONFIG: variants/pi-pr935/config.toml
 
+  beelink-t4:
+    desc: Build Beelink T4 x86_64 bootable ISO
+    cmd:
+      task: bootc-image-builder
+      vars:
+        ARCH: x86_64
+        IMAGE: beelink-t4
+        BOOTC_IMAGE_TYPE: iso
+        ROOTFS: ext4
+        OUTDIR: dist/beelink-t4
+        CONFIG: variants/beelink-t4/config.toml
+

@@ -1,0 +1,92 @@
+ARG FEDORA_MAJOR_VERSION
+FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
+
+# Passwordless sudo for wheel group
+COPY ./variants/beelink-t4/files/wheel-passwordless-sudo /etc/sudoers.d/wheel-passwordless-sudo
+
+# Common packages and shell setup
+COPY --chmod=755 ./scripts/install-common.sh /tmp/install-common.sh
+RUN /tmp/install-common.sh
+
+COPY --chmod=755 ./scripts/setup-shell.sh /tmp/setup-shell.sh
+RUN /tmp/setup-shell.sh
+
+# Global tasks
+COPY ./scripts/files/usr/local/share/global-tasks /usr/local/share/global-tasks
+COPY ./scripts/files/usr/local/bin/global-task /usr/local/bin/global-task
+RUN chmod +x /usr/local/bin/global-task && \
+  chmod +x /usr/local/share/global-tasks/scripts/*.sh
+
+# x86_64-specific packages: microcode updates
+RUN dnf install -y \
+  microcode_ctl \
+  && dnf clean all
+
+# Container tooling (dev tools go in distrobox)
+RUN dnf install -y \
+  buildah \
+  skopeo \
+  fuse-overlayfs \
+  slirp4netns \
+  && dnf clean all
+
+# Networking: WiFi AP (hostapd), mDNS (avahi), DHCP for AP
+RUN dnf install -y \
+  hostapd \
+  dnsmasq \
+  avahi \
+  avahi-tools \
+  nss-mdns \
+  NetworkManager-wifi \
+  iw \
+  wireless-regdb \
+  && dnf clean all
+
+# k0s dependencies
+RUN dnf install -y \
+  container-selinux \
+  iptables-nft \
+  coreutils \
+  && dnf clean all
+
+# Install k0s binary
+ARG K0S_VERSION=v1.31.3+k0s.0
+RUN curl -sSLf https://github.com/k0sproject/k0s/releases/download/${K0S_VERSION}/k0s-${K0S_VERSION}-amd64 -o /usr/local/bin/k0s && \
+  chmod +x /usr/local/bin/k0s
+
+# Install urunc (unikernel containerd shim)
+ARG URUNC_VERSION=v0.7.0
+RUN curl -sSLf https://github.com/urunc-dev/urunc/releases/download/${URUNC_VERSION}/containerd-shim-urunc-v2_static_amd64 -o /usr/local/bin/containerd-shim-urunc-v2 && \
+  chmod +x /usr/local/bin/containerd-shim-urunc-v2
+
+# Copy distrobox assemble config
+COPY ./variants/beelink-t4/files/etc/distrobox/assemble.ini /etc/distrobox/assemble.ini
+
+# Copy WiFi AP configuration
+COPY ./variants/beelink-t4/files/etc/hostapd/hostapd.conf /etc/hostapd/hostapd.conf
+COPY ./variants/beelink-t4/files/etc/dnsmasq.d/wifi-ap.conf /etc/dnsmasq.d/wifi-ap.conf
+
+# Copy k0s configuration
+COPY ./variants/beelink-t4/files/etc/k0s/k0s.yaml /etc/k0s/k0s.yaml
+COPY ./variants/beelink-t4/files/etc/k0s/urunc-runtimeclass.yaml /etc/k0s/urunc-runtimeclass.yaml
+
+# Copy systemd service files
+COPY ./variants/beelink-t4/files/etc/systemd/system/wifi-ap.service /etc/systemd/system/wifi-ap.service
+COPY ./variants/beelink-t4/files/etc/systemd/system/dnsmasq-wifi.service /etc/systemd/system/dnsmasq-wifi.service
+COPY ./variants/beelink-t4/files/etc/systemd/system/k0s-install.service /etc/systemd/system/k0s-install.service
+COPY ./variants/beelink-t4/files/etc/systemd/system/k0s-setup.service /etc/systemd/system/k0s-setup.service
+
+# Copy scripts
+COPY --chmod=755 ./variants/beelink-t4/scripts/setup-wifi-ap.sh /usr/local/bin/setup-wifi-ap.sh
+COPY --chmod=755 ./variants/beelink-t4/scripts/k0s-setup.sh /usr/local/bin/k0s-setup.sh
+
+# Enable services
+RUN systemctl enable sshd && \
+  systemctl enable avahi-daemon && \
+  systemctl enable wifi-ap.service && \
+  systemctl enable dnsmasq-wifi.service && \
+  systemctl enable k0s-install.service && \
+  systemctl enable k0s-setup.service
+
+# Validate container
+RUN bootc container lint

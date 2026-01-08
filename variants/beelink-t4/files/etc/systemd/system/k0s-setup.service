@@ -1,0 +1,13 @@
+[Unit]
+Description=k0s post-start setup (kubeconfig, RuntimeClass)
+After=k0s-install.service
+Requires=k0s-install.service
+ConditionPathExists=!/var/lib/k0s/.setup-complete
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/k0s-setup.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+metadata:
+  name: beelink-unikernel-dev
+spec:
+  api:
+    address: 0.0.0.0
+    port: 6443
+    sans:
+      - 192.168.100.1
+      - beelink.local
+      - localhost
+
+  network:
+    provider: kube-router
+    podCIDR: 10.244.0.0/16
+    serviceCIDR: 10.96.0.0/12
+
+  storage:
+    type: etcd
+
+  telemetry:
+    enabled: false
+
+  workerProfiles:
+    - name: default
+      values:
+        containerdConfigOverrides: |
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.urunc]
+            runtime_type = "io.containerd.urunc.v2"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.urunc.options]
+              BinaryName = "/usr/local/bin/containerd-shim-urunc-v2"
+
+  extensions:
+    helm:
+      repositories:
+        - name: nubificus
+          url: https://nubificus.github.io/helm-charts
+      charts: []

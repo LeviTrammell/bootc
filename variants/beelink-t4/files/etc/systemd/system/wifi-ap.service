@@ -1,0 +1,13 @@
+[Unit]
+Description=WiFi Access Point for headless access
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/setup-wifi-ap.sh start
+ExecStop=/usr/local/bin/setup-wifi-ap.sh stop
+
+[Install]
+WantedBy=multi-user.target

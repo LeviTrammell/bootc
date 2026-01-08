@@ -35,3 +35,11 @@ jobs:
     with:
       image: pi-pr935
       arch: linux/arm64
+
+  beelink-t4:
+    name: beelink-t4
+    uses: ./.github/workflows/build-image.yml
+    secrets: inherit
+    with:
+      image: beelink-t4
+      arch: linux/amd64
