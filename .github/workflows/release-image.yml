@@ -56,15 +56,16 @@ jobs:
             --rootfs ext4 \
             ghcr.io/levitrammell/${{ inputs.image }}:42
 
-      - name: Rename ISO
+      - name: Compress ISO
         run: |
-          sudo find output -name "*.iso" -exec mv {} output/${{ inputs.image }}-${{ inputs.tag }}.iso \;
           sudo chown -R $USER:$USER output/
+          find output -name "*.iso" -exec xz -T0 -v {} \;
+          mv output/bootiso/install.iso.xz output/${{ inputs.image }}-${{ inputs.tag }}.iso.xz
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.image }} ${{ inputs.tag }}
-          files: output/${{ inputs.image }}-${{ inputs.tag }}.iso
+          files: output/${{ inputs.image }}-${{ inputs.tag }}.iso.xz
           generate_release_notes: true
