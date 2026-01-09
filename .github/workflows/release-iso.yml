@@ -1,0 +1,63 @@
+---
+name: Release ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image to build ISO for
+        type: choice
+        options:
+          - beelink-t4
+        default: beelink-t4
+      tag:
+        description: Release tag (e.g., v1.0.0)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  build-iso:
+    name: Build ISO
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@v8
+
+      - name: Login to GitHub Container Registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ISO
+        run: |
+          mkdir -p output
+          sudo podman run --rm --privileged \
+            --security-opt label=type:unconfined_t \
+            -v $(pwd)/variants/${{ inputs.image }}/config.toml:/config.toml:ro \
+            -v $(pwd)/output:/output \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type iso \
+            --rootfs ext4 \
+            ghcr.io/levitrammell/${{ inputs.image }}:latest
+
+      - name: Rename ISO
+        run: |
+          mv output/bootiso/*.iso output/${{ inputs.image }}-${{ inputs.tag }}.iso
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.image }} ${{ inputs.tag }}
+          files: output/${{ inputs.image }}-${{ inputs.tag }}.iso
+          generate_release_notes: true
