@@ -50,13 +50,13 @@ jobs:
             -v $(pwd)/output:/output \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             quay.io/centos-bootc/bootc-image-builder:latest \
-            --type iso \
+            --type anaconda-iso \
             --rootfs ext4 \
             ghcr.io/levitrammell/${{ inputs.image }}:latest
 
       - name: Rename ISO
         run: |
-          mv output/bootiso/*.iso output/${{ inputs.image }}-${{ inputs.tag }}.iso
+          find output -name "*.iso" -exec mv {} output/${{ inputs.image }}-${{ inputs.tag }}.iso \;
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
