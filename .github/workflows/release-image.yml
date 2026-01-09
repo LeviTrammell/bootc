@@ -1,5 +1,5 @@
 ---
-name: Release ISO
+name: Release Image
 
 on:
   workflow_dispatch:
@@ -50,18 +50,19 @@ jobs:
             -v $(pwd)/output:/output \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             quay.io/centos-bootc/bootc-image-builder:latest \
-            --type anaconda-iso \
+            --type raw \
             --rootfs ext4 \
             ghcr.io/levitrammell/${{ inputs.image }}:latest
 
-      - name: Rename ISO
+      - name: Compress and rename image
         run: |
-          find output -name "*.iso" -exec mv {} output/${{ inputs.image }}-${{ inputs.tag }}.iso \;
+          xz -T0 output/image/disk.raw
+          mv output/image/disk.raw.xz output/${{ inputs.image }}-${{ inputs.tag }}.raw.xz
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.image }} ${{ inputs.tag }}
-          files: output/${{ inputs.image }}-${{ inputs.tag }}.iso
+          files: output/${{ inputs.image }}-${{ inputs.tag }}.raw.xz
           generate_release_notes: true

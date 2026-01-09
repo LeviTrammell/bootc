@@ -1,0 +1,15 @@
+./lib/lwip/lwip/test/fuzz/inputs/arp/arp_req.bin
+./lib/lwip/lwip/test/fuzz/inputs/icmp/icmp_ping.bin
+./lib/lwip/lwip/test/fuzz/inputs/ipv6/neighbor_solicitation.bin
+./lib/lwip/lwip/test/fuzz/inputs/ipv6/router_adv.bin
+./lib/lwip/lwip/test/fuzz/inputs/tcp/tcp_syn.bin
+./lib/lwip/lwip/test/fuzz/inputs/udp/udp_port_5000.bin
+./lib/mbedtls/external/mbedtls/tests/data_files/base64/def_b64_ff.bin
+./lib/mbedtls/external/mbedtls/tests/data_files/pkcs7_data.bin
+./lib/mbedtls/external/mbedtls/tests/data_files/pkcs7_data_1.bin
+./lib/mbedtls/external/mbedtls/tests/data_files/pkcs7_zerolendata.bin
+./tools/binman/test/aes256.bin
+./tools/binman/test/descriptor.bin
+./u-boot-dtb.bin
+./u-boot-nodtb.bin
+./u-boot.bin

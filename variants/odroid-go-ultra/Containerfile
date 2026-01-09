@@ -11,6 +11,7 @@ RUN echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-passwordless-su
 RUN dnf install -y \
     uboot-tools \
     arm-image-installer \
+    kernel-core \
     mesa-dri-drivers \
     mesa-vulkan-drivers \
     mesa-libEGL \
@@ -104,16 +105,25 @@ RUN chmod +x /usr/local/bin/display-test.sh && \
 # Kernel modules for Amlogic S922X
 RUN echo -e "meson_drm\npanfrost\nmeson_gxl\ngpio_keys\nmeson_ir" > /etc/modules-load.d/amlogic.conf
 
-# Create extlinux configuration
+# Install Fedora's ARM device trees
+RUN dnf install -y kernel-modules && dnf clean all
+
+# Create symlink for device trees - Fedora installs them to /usr/lib/linux-<version>/dtb
+RUN mkdir -p /boot/dtb && \
+    ln -sf /usr/lib/linux-*/dtb/amlogic/*.dtb /boot/dtb/ || true
+
+# Create extlinux configuration for U-Boot
+# Using fdtdir instead of fdt to let U-Boot find the right DTB
 RUN mkdir -p /boot/extlinux && \
     cat > /boot/extlinux/extlinux.conf <<'EOF'
 default fedora
-timeout 10
+timeout 30
 
 label fedora
     kernel /vmlinuz
-    fdt /dtb/meson-g12b-odroid-go-ultra.dtb
-    append root=UUID=ROOT_UUID rw rootwait console=ttyAML0,115200n8 console=tty1 selinux=0 plymouth.enable=0 systemd.unified_cgroup_hierarchy=1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1
+    initrd /initramfs.img
+    fdtdir /dtb
+    append root=LABEL=root rw rootwait console=ttyAML0,115200n8 console=tty1 quiet splash
 EOF
 
 # First boot partition resize with auto-detection
