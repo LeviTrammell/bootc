@@ -58,7 +58,8 @@ jobs:
 
       - name: Rename ISO
         run: |
-          find output -name "*.iso" -exec mv {} output/${{ inputs.image }}-${{ inputs.tag }}.iso \;
+          sudo find output -name "*.iso" -exec mv {} output/${{ inputs.image }}-${{ inputs.tag }}.iso \;
+          sudo chown -R $USER:$USER output/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
