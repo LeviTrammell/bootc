@@ -38,6 +38,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Pull container image
+        run: sudo podman pull ghcr.io/levitrammell/${{ inputs.image }}:latest
+
       - name: Build ISO
         run: |
           mkdir -p output
