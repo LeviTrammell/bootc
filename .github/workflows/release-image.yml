@@ -39,7 +39,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull container image
-        run: sudo podman pull ghcr.io/levitrammell/${{ inputs.image }}:latest
+        run: sudo podman pull ghcr.io/levitrammell/${{ inputs.image }}:42
 
       - name: Build ISO
         run: |
@@ -51,10 +51,10 @@ jobs:
             -v $(pwd)/output:/output \
             -v /var/lib/containers/storage:/var/lib/containers/storage \
             quay.io/centos-bootc/bootc-image-builder:latest \
-            --type bootc-installer \
+            --type anaconda-iso \
             --config /config.toml \
             --rootfs ext4 \
-            ghcr.io/levitrammell/${{ inputs.image }}:latest
+            ghcr.io/levitrammell/${{ inputs.image }}:42
 
       - name: Rename ISO
         run: |
