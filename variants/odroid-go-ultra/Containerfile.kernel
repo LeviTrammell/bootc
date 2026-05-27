@@ -1,0 +1,118 @@
+# Custom kernel builder for ODROID Go Ultra (Amlogic S922X)
+#
+# Builds a minimal ARM64 kernel that fits within the vendor U-Boot's ~30MB
+# kernel size limit. Built natively on arm64 (no emulation on Apple Silicon).
+#
+# Output in /output/:
+#   /output/boot/Image                              - Raw ARM64 kernel image (<25MB)
+#   /output/boot/dtb/amlogic/meson-g12b-*.dtb       - Device tree blobs
+#   /output/lib/modules/<version>/                   - Kernel modules
+#   /output/kernel-version                           - Version string for scripts
+#
+# Usage:
+#   podman build --platform linux/arm64 -f Containerfile.kernel -t kernel .
+#   podman create --name k kernel && podman cp k:/output ./kernel-out && podman rm k
+
+FROM --platform=linux/arm64 docker.io/library/ubuntu:22.04 AS kernel-builder
+
+ARG KERNEL_VERSION=6.12.12
+
+# Install native ARM64 build toolchain
+RUN apt-get update && apt-get install -y \
+    gcc \
+    patch \
+    kmod \
+    make \
+    bc \
+    bison \
+    flex \
+    libssl-dev \
+    libelf-dev \
+    python3 \
+    perl \
+    cpio \
+    xz-utils \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ARCH=arm64
+
+# Download kernel source
+RUN MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
+    wget -q https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz && \
+    tar xf linux-${KERNEL_VERSION}.tar.xz && \
+    rm linux-${KERNEL_VERSION}.tar.xz
+
+WORKDIR /linux-${KERNEL_VERSION}
+
+# Apply ROCKNIX/Amlogic kernel patches (display, DRM fixes, etc.)
+COPY variants/odroid-go-ultra/patches/linux/ /tmp/patches/
+RUN for p in \
+      /tmp/patches/amlogic-0011-*.patch \
+      /tmp/patches/amlogic-0012-*.patch \
+      /tmp/patches/0001-*.patch \
+      /tmp/patches/0002-*.patch \
+      /tmp/patches/0003-*.patch \
+      /tmp/patches/0006-*.patch \
+      /tmp/patches/0007-*.patch \
+      /tmp/patches/0042-*.patch; do \
+        echo "Applying: $(basename $p)" && \
+        patch -p1 < "$p" || { echo "FAILED: $p"; exit 1; }; \
+    done
+
+# Start from ARM64 defconfig then apply our minimal S922X config
+COPY variants/odroid-go-ultra/kernel-config.fragment /tmp/kernel-config.fragment
+RUN make defconfig && \
+    scripts/kconfig/merge_config.sh -m .config /tmp/kernel-config.fragment && \
+    make olddefconfig
+
+# Build kernel Image, device trees, and modules
+RUN make -j$(nproc) Image dtbs modules
+
+# Verify the Image is under 25MB
+RUN IMAGE_SIZE=$(stat -c%s arch/arm64/boot/Image) && \
+    echo "Kernel Image size: ${IMAGE_SIZE} bytes ($(( IMAGE_SIZE / 1024 / 1024 ))MB)" && \
+    if [ "${IMAGE_SIZE}" -gt 26214400 ]; then \
+        echo "WARNING: Kernel Image is over 25MB - may not boot with vendor U-Boot"; \
+    else \
+        echo "OK: Kernel Image fits within vendor U-Boot's size limit"; \
+    fi
+
+# Install to output directory
+RUN mkdir -p /output/boot/dtb/amlogic /output/lib/modules && \
+    cp arch/arm64/boot/Image /output/boot/Image && \
+    cp arch/arm64/boot/dts/amlogic/meson-g12b-odroid-go-ultra.dtb /output/boot/dtb/amlogic/ && \
+    cp arch/arm64/boot/dts/amlogic/meson-g12b-odroid-n2.dtb /output/boot/dtb/amlogic/ 2>/dev/null || true && \
+    cp arch/arm64/boot/dts/amlogic/meson-g12b-odroid-n2-plus.dtb /output/boot/dtb/amlogic/ 2>/dev/null || true && \
+    make modules_install INSTALL_MOD_PATH=/output && \
+    echo "${KERNEL_VERSION}" > /output/kernel-version
+
+# Build mali_kbase out-of-tree kernel module (proprietary Mali GPU driver)
+# Source: ROCKNIX mali_kbase fork with Meson/Amlogic platform support
+RUN wget -q https://github.com/ROCKNIX/mali_kbase/archive/f86d3dd4923b5d5de11ae7eaf7a6c4fee136528e.tar.gz -O /tmp/mali_kbase.tar.gz && \
+    tar xf /tmp/mali_kbase.tar.gz -C /tmp/ && \
+    rm /tmp/mali_kbase.tar.gz
+
+RUN MALI_SRC=$(ls -d /tmp/mali_kbase-*/product/kernel/drivers/gpu/arm/midgard) && \
+    make -C "$MALI_SRC" \
+        KDIR=/linux-${KERNEL_VERSION} \
+        CONFIG_MALI_MIDGARD=m \
+        CONFIG_MALI_PLATFORM_NAME="meson" \
+        CONFIG_MALI_REAL_HW=y \
+        CONFIG_MALI_DEVFREQ=y \
+        CONFIG_MALI_GATOR_SUPPORT=y && \
+    make -C /linux-${KERNEL_VERSION} M="$MALI_SRC" \
+        INSTALL_MOD_PATH=/output modules_install && \
+    rm -rf /tmp/mali_kbase-*
+
+# Show what we built
+RUN echo "=== Kernel build complete ===" && \
+    echo "Image: $(du -h /output/boot/Image | cut -f1)" && \
+    echo "DTBs:" && ls -lh /output/boot/dtb/amlogic/ && \
+    echo "Modules: $(du -sh /output/lib/modules/ | cut -f1)" && \
+    echo "mali_kbase:" && find /output/lib/modules -name 'mali_kbase.ko*' && \
+    echo "Version: $(cat /output/kernel-version)"
+
+# Final stage - just the outputs
+FROM scratch
+COPY --from=kernel-builder /output/ /
