@@ -1,0 +1,15 @@
+[Unit]
+Description=niri-nav gamepad navigation daemon
+StartLimitIntervalSec=60
+StartLimitBurst=15
+
+[Service]
+ExecStart=/usr/local/bin/niri-nav
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=default.target

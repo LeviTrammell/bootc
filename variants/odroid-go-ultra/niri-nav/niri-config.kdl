@@ -1,0 +1,57 @@
+// Niri config for ODROID Go Ultra (480x854 MIPI DSI, landscape via rotation)
+
+output "DSI-1" {
+    transform "normal"
+    scale 1
+}
+
+layout {
+    gaps 4
+    center-focused-column "never"
+    default-column-width { proportion 1.0; }
+
+    focus-ring {
+        width 2
+        active-color "#88c0d0"
+        inactive-color "#4c566a"
+    }
+
+    tab-indicator {
+        off
+    }
+}
+
+// Remove client-side title bars (minimize/maximize/close are useless without a mouse)
+prefer-no-csd
+
+// Force all windows to use server-side decorations (niri draws only the focus ring)
+window-rule {
+    clip-to-geometry true
+    geometry-corner-radius 0 0 0 0
+}
+
+spawn-at-startup "alacritty"
+// spawn-at-startup "niri-nav"  // managed by systemd user service instead
+// osk-overlay is spawned by niri-nav when entering TEXT_ENTRY mode
+
+environment {
+    GTK_IM_MODULE "wayland"
+}
+
+cursor {
+    hide-when-typing
+    hide-after-inactive-ms 3000
+}
+
+hotkey-overlay {
+    skip-at-startup
+}
+
+binds {
+}
+
+// Panfrost creates renderD128 (card1) but display is on card0 (meson-drm).
+// niri needs explicit render device since display and render are separate cards.
+debug {
+    render-drm-device "/dev/dri/renderD128"
+}

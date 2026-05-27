@@ -1,0 +1,7 @@
+# Rust build output
+/target
+
+# Compiled C helpers (built from source in the Containerfile)
+/osk-overlay
+/gamepad-merger
+/joystick-cursor
