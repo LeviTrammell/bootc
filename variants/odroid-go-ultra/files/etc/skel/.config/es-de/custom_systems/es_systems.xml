@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Custom ES-DE systems for ODROID Go Ultra -->
+<systemList>
+    <!-- PS2 via AetherSX2 standalone (ROCKNIX binary) -->
+    <system>
+        <name>ps2</name>
+        <fullname>PlayStation 2</fullname>
+        <path>%ROMPATH%/ps2</path>
+        <extension>.bin .BIN .chd .CHD .cso .CSO .iso .ISO .gz .GZ</extension>
+        <command label="AetherSX2 (Standalone)">aethersx2 %ROM%</command>
+        <command label="Shortcut or script">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <platform>ps2</platform>
+        <theme>ps2</theme>
+    </system>
+</systemList>

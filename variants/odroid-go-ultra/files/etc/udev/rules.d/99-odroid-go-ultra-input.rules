@@ -1,0 +1,6 @@
+# Odroid Go Ultra gamepad input rules
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="odroid-go-ultra-joypad", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="js*", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="adc-joystick-left", MODE="0666"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="adc-joystick-right", MODE="0666"

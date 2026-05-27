@@ -1,0 +1,8 @@
+#!/bin/sh
+# AetherSX2 wrapper: sets up environment and runs from correct directory.
+# The AppImage was extracted to /usr/local/share/aethersx2-sa/ and AppRun
+# uses cd "$(dirname "$0")" internally, so we must run from that directory.
+export PAN_I_WANT_A_BROKEN_VULKAN_DRIVER=1
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+cd /usr/local/share/aethersx2-sa
+exec ./usr/bin/aethersx2 -fullscreen -nogui "$@"
