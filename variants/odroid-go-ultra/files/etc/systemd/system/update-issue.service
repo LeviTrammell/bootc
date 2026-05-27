@@ -1,0 +1,11 @@
+[Unit]
+Description=Generate login banner with system info
+Before=getty@tty1.service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-issue.sh
+
+[Install]
+WantedBy=multi-user.target
