@@ -1,0 +1,12 @@
+[Unit]
+Description=Set GPU clock to 800MHz (panfrost has no DVFS on S922X)
+After=systemd-modules-load.service
+Before=display-manager.service graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 /usr/local/bin/set-gpu-clock.py
+
+[Install]
+WantedBy=sysinit.target

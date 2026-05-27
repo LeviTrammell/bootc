@@ -1,0 +1,13 @@
+[Unit]
+Description=Bind-mount Mali GPU libraries over Mesa
+DefaultDependencies=no
+After=local-fs.target
+Before=graphical.target display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/gpu-driver.sh
+
+[Install]
+WantedBy=multi-user.target
