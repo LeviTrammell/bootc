@@ -1,0 +1,13 @@
+[Unit]
+Description=USB gadget initialization
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=15
+ExecStart=/usr/local/bin/usb-gadget.sh
+
+[Install]
+WantedBy=multi-user.target
