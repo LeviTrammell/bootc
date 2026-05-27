@@ -1,0 +1,11 @@
+[Unit]
+Description=Fix meson ENCL gamma table (S922X DSI timeout workaround)
+After=systemd-modules-load.service
+Before=getty@tty1.service display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fix-meson-gamma.sh
+
+[Install]
+WantedBy=sysinit.target
