@@ -1,0 +1,12 @@
+[Unit]
+Description=Grow root partition on first boot
+Before=local-fs-pre.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/growfs.sh
+StandardOutput=journal
+
+[Install]
+WantedBy=sysinit.target

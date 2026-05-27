@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate extlinux.conf from ostree BLS entry
+DefaultDependencies=no
+After=local-fs.target boot.mount
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-extlinux.sh
+StandardOutput=journal
+
+[Install]
+WantedBy=sysinit.target
