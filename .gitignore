@@ -1,3 +1,9 @@
 .DS_Store
 dist
 firmware
+
+# Large/flashable disk images (e.g. rocknix-fat.img) — never commit these
+*.img
+
+# Deprecated Mali proprietary GPU build output (project uses Panfrost now)
+libmali-out/
