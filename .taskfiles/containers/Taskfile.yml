@@ -23,6 +23,16 @@ tasks:
         FILE: ./variants/pi/Containerfile
         TAG: pi
 
+  odroid-go-ultra-kernel:
+    desc: Build custom minimal kernel for Odroid Go Ultra (native arm64)
+    cmd:
+      task: build
+      vars:
+        FILE: ./variants/odroid-go-ultra/Containerfile.kernel
+        TAG: odroid-go-ultra-kernel
+        ARCH: arm64
+        FEDORA_MAJOR_VERSION: 42
+
   odroid-go-ultra-uboot:
     desc: Build U-Boot bootloader container for Odroid Go Ultra
     cmd:
@@ -33,14 +43,14 @@ tasks:
         FEDORA_MAJOR_VERSION: 43
 
   odroid-go-ultra:
-    desc: Build Odroid Go Ultra bootc image (depends on U-Boot container)
-    deps: [odroid-go-ultra-uboot]
+    desc: Build Odroid Go Ultra bootc image (depends on kernel + U-Boot containers)
+    deps: [odroid-go-ultra-kernel, odroid-go-ultra-uboot]
     cmd:
       task: build
       vars:
         FILE: ./variants/odroid-go-ultra/Containerfile
         TAG: odroid-go-ultra
-        FEDORA_MAJOR_VERSION: 43
+        FEDORA_MAJOR_VERSION: 42
 
   pi-pr935:
     desc: Build Raspberry Pi image using bootupd PR #935 (test variant, Fedora 43)

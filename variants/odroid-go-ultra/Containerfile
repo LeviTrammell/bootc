@@ -1,17 +1,81 @@
 # Odroid Go Ultra bootc container
-# System configuration only - bootloader handled separately by U-Boot container
+# Uses a custom minimal kernel built by Containerfile.kernel
+# Bootloader handled separately by ROCKNIX vendor U-Boot
 ARG FEDORA_MAJOR_VERSION=42
+ARG BASE_REPO=ghcr.io/levitrammell
+ARG KERNEL_IMAGE=${BASE_REPO}/odroid-go-ultra-kernel
+
+# Kernel container is built natively on arm64
+FROM --platform=linux/arm64 ${KERNEL_IMAGE} AS custom-kernel
+
+# Build niri-nav gamepad navigation daemon + gamepad-merger + joystick-cursor
+FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS niri-nav-builder
+RUN dnf install -y rust cargo gcc gtk4-devel gtk4-layer-shell-devel pkg-config \
+    wayland-devel wlr-protocols-devel && dnf clean all
+COPY variants/odroid-go-ultra/niri-nav/ /build/
+WORKDIR /build
+RUN cargo build --release
+# Build gamepad-merger (merges 3 evdev devices into one virtual gamepad via uinput)
+RUN gcc -o /build/gamepad-merger /build/gamepad-merger.c -O2 -lm
+# Build osk-overlay (GTK4 + gtk-layer-shell on-screen keyboard overlay)
+RUN gcc -o /build/osk-overlay /build/osk-overlay.c \
+    $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
+# Build joystick-cursor (analog stick → Wayland virtual pointer via wlr protocol)
+RUN wayland-scanner client-header \
+      /usr/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml \
+      /build/vptr-client.h && \
+    wayland-scanner private-code \
+      /usr/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml \
+      /build/vptr-code.c && \
+    gcc -o /build/joystick-cursor /build/joystick-cursor.c /build/vptr-code.c \
+      $(pkg-config --cflags --libs wayland-client) -lm
+# Build vt-switch-monitor (L1+R1+Select -> chvt for TTY2 emulation side)
+COPY variants/odroid-go-ultra/files/usr/local/bin/vt-switch-monitor.c /tmp/vt-switch-monitor.c
+RUN gcc -static -o /build/vt-switch-monitor /tmp/vt-switch-monitor.c
+
+# Build cage (Wayland kiosk compositor for emulation on TTY2)
+FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS cage-builder
+RUN dnf install -y meson ninja-build gcc wlroots-devel \
+    libxkbcommon-devel wayland-protocols-devel libseat-devel git && dnf clean all
+RUN git clone --depth=1 https://github.com/cage-kiosk/cage.git /build/cage
+WORKDIR /build/cage
+RUN meson setup builddir && ninja -C builddir
+
+# Build ES-DE (EmulationStation Desktop Edition) with GLES
+FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS esde-builder
+RUN dnf install -y cmake gcc-c++ SDL2-devel mesa-libGLES-devel mesa-libEGL-devel \
+    freeimage-devel freetype-devel libcurl-devel pugixml-devel rapidjson-devel \
+    ffmpeg-free-devel poppler-cpp-devel libgit2-devel bluez-libs-devel git && dnf clean all
+RUN git clone --depth=1 \
+    https://gitlab.com/es-de/emulationstation-de.git /build/esde
+WORKDIR /build/esde
+RUN cmake -B build -DGLES=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j$(nproc) && DESTDIR=/output cmake --install build
+
+# Build custom minimal initramfs (replaces dracut - dracut's large initramfs
+# causes CMA memory pressure that kills the MIPI-DSI display on the S922X)
+FROM --platform=linux/arm64 alpine:3.20 AS initramfs-builder
+RUN apk add --no-cache gcc musl-dev linux-headers cpio
+COPY variants/odroid-go-ultra/files/initramfs/init.c /tmp/init.c
+RUN gcc -static -no-pie -Os -o /tmp/init /tmp/init.c && \
+    mkdir -p /initramfs/dev /initramfs/proc /initramfs/sys \
+             /initramfs/mnt /initramfs/sysroot /initramfs/realroot && \
+    cp /tmp/init /initramfs/init && chmod 755 /initramfs/init && \
+    cd /initramfs && find . | cpio -o -H newc | gzip > /tmp/initramfs.img && \
+    echo "Custom initramfs: $(du -h /tmp/initramfs.img | cut -f1)"
 
 FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
 
 # Set up passwordless sudo for wheel group
 RUN echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-passwordless-sudo
 
-# Install necessary packages
+# Remove Fedora's stock kernel - we use our own minimal build
+RUN dnf remove -y kernel-core kernel-modules kernel-modules-core kernel-modules-extra 2>/dev/null || true
+
+# Install necessary packages (no kernel packages - using custom kernel)
 RUN dnf install -y \
-    uboot-tools \
-    arm-image-installer \
-    kernel-core \
+    ostree \
+    terminus-fonts-console \
     mesa-dri-drivers \
     mesa-vulkan-drivers \
     mesa-libEGL \
@@ -23,144 +87,208 @@ RUN dnf install -y \
     e2fsprogs \
     dosfstools \
     plymouth \
+    dnsmasq \
+    niri \
+    wtype \
+    gtk4 \
+    gtk4-layer-shell \
+    alacritty \
+    fzf \
+    nwg-drawer \
+    ydotool \
+    grim \
+    wlrctl \
+    retroarch \
+    wlr-randr \
     && dnf clean all
+
+# Install custom kernel from kernel builder container
+COPY --from=custom-kernel /kernel-version /tmp/kernel-version
+COPY --from=custom-kernel /boot/Image /tmp/kernel/Image
+COPY --from=custom-kernel /boot/dtb/ /tmp/kernel/dtb/
+COPY --from=custom-kernel /lib/modules/ /tmp/kernel/modules/
+
+COPY --from=initramfs-builder /tmp/initramfs.img /tmp/custom-initramfs.img
+
+RUN KVER=$(cat /tmp/kernel-version) && \
+    echo "Installing custom kernel ${KVER}..." && \
+    # Install modules
+    cp -r /tmp/kernel/modules/${KVER} /usr/lib/modules/${KVER} && \
+    # Install kernel as vmlinuz (bootc convention)
+    cp /tmp/kernel/Image /usr/lib/modules/${KVER}/vmlinuz && \
+    # Install DTBs
+    mkdir -p /usr/lib/modules/${KVER}/dtb && \
+    cp -r /tmp/kernel/dtb/* /usr/lib/modules/${KVER}/dtb/ && \
+    # Run depmod
+    depmod ${KVER} && \
+    # Install custom initramfs (replaces dracut)
+    cp /tmp/custom-initramfs.img /usr/lib/modules/${KVER}/initramfs.img && \
+    echo "Initramfs: $(du -h /usr/lib/modules/${KVER}/initramfs.img | cut -f1)" && \
+    rm -rf /tmp/kernel /tmp/kernel-version /tmp/custom-initramfs.img
+
+# Copy device trees to /boot/dtb for extlinux.conf FDT references
+RUN KVER=$(ls /usr/lib/modules/ | head -1) && \
+    mkdir -p /boot/dtb/amlogic && \
+    cp /usr/lib/modules/${KVER}/dtb/amlogic/meson-g12b-odroid-go-ultra.dtb /boot/dtb/amlogic/
 
 # Enable SSH
 RUN systemctl enable sshd
 
+# Kernel modules for Amlogic S922X (panfrost for GPU rendering)
+RUN echo -e "meson_drm\npanfrost\ngpio_keys\nmeson_ir\nuinput" > /etc/modules-load.d/amlogic.conf
+
 # Gaming handheld specific configurations
-RUN mkdir -p /etc/udev/rules.d && \
-    cat > /etc/udev/rules.d/99-odroid-go-ultra-input.rules <<'EOF'
-# Odroid Go Ultra gamepad input rules
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="odroid-go-ultra-joypad", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
-SUBSYSTEM=="input", KERNEL=="js*", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
-EOF
+COPY variants/odroid-go-ultra/files/etc/udev/rules.d/99-odroid-go-ultra-input.rules /etc/udev/rules.d/99-odroid-go-ultra-input.rules
 
-# Power management service
-RUN cat > /etc/systemd/system/odroid-power-management.service <<'EOF'
-[Unit]
-Description=Odroid Go Ultra Power Management
-After=multi-user.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/bash -c 'echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
+# Power management
+COPY variants/odroid-go-ultra/files/etc/systemd/system/odroid-power-management.service /etc/systemd/system/odroid-power-management.service
 RUN systemctl enable odroid-power-management.service
 
-# Display test service
-RUN cat > /etc/systemd/system/display-test.service <<'EOF'
-[Unit]
-Description=Display Test on Boot
-After=multi-user.target plymouth-quit.service
-Before=getty@tty1.service
+# Generate /etc/issue with system info before getty starts
+COPY variants/odroid-go-ultra/files/etc/systemd/system/update-issue.service /etc/systemd/system/update-issue.service
+COPY variants/odroid-go-ultra/files/usr/local/bin/update-issue.sh /usr/local/bin/update-issue.sh
+RUN chmod +x /usr/local/bin/update-issue.sh && \
+    systemctl enable update-issue.service
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/display-test.sh
-RemainAfterExit=yes
-StandardOutput=tty
-StandardError=tty
-TTYPath=/dev/tty1
+# Console color palette (retro green-on-black CRT look)
+COPY variants/odroid-go-ultra/files/etc/profile.d/console-colors.sh /etc/profile.d/console-colors.sh
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Fix meson ENCL gamma table (S922X DSI displays get random colors
+# because the kernel's gamma init times out during early boot)
+COPY variants/odroid-go-ultra/files/usr/local/bin/fix-meson-gamma.sh /usr/local/bin/fix-meson-gamma.sh
+COPY variants/odroid-go-ultra/files/usr/local/lib/fix-meson-gamma.py /usr/local/lib/fix-meson-gamma.py
+COPY variants/odroid-go-ultra/files/etc/systemd/system/fix-meson-gamma.service /etc/systemd/system/fix-meson-gamma.service
+RUN chmod +x /usr/local/bin/fix-meson-gamma.sh && \
+    systemctl enable fix-meson-gamma.service
 
-# Create display test script
-RUN cat > /usr/local/bin/display-test.sh <<'EOF'
-#!/bin/bash
-clear > /dev/tty1
-echo -e "\033[1;32m" > /dev/tty1
-echo "================================" > /dev/tty1
-echo "  ODROID GO ULTRA BOOT SUCCESS " > /dev/tty1
-echo "================================" > /dev/tty1
-echo -e "\033[0m" > /dev/tty1
-echo "" > /dev/tty1
-echo -e "\033[1;34mSystem Information:\033[0m" > /dev/tty1
-echo "-------------------" > /dev/tty1
-uname -a > /dev/tty1
-echo "" > /dev/tty1
-echo -e "\033[1;34mNetwork Interfaces:\033[0m" > /dev/tty1
-echo "-------------------" > /dev/tty1
-ip -4 addr show | grep -E "inet|^[0-9]+:" | sed 's/^/  /' > /dev/tty1
-echo "" > /dev/tty1
-echo -e "\033[1;34mDisk Usage:\033[0m" > /dev/tty1
-echo "-------------------" > /dev/tty1
-df -h / | tail -n1 | awk '{print "  Root: " $3 " / " $2 " (" $5 ")"}' > /dev/tty1
-echo "" > /dev/tty1
-echo -e "\033[1;32mSystem Ready!\033[0m" > /dev/tty1
-echo "SSH access available at above IP addresses" > /dev/tty1
-EOF
+# === Panfrost GPU driver (open-source Mesa for Mali-G52) ===
+# Provides EGL compositing for niri + Vulkan for emulators via PanVK
 
-RUN chmod +x /usr/local/bin/display-test.sh && \
-    systemctl enable display-test.service
+# Blacklist proprietary mali_kbase (we use panfrost instead)
+COPY variants/odroid-go-ultra/files/etc/modprobe.d/gpu.conf /etc/modprobe.d/gpu.conf
 
-# Kernel modules for Amlogic S922X
-RUN echo -e "meson_drm\npanfrost\nmeson_gxl\ngpio_keys\nmeson_ir" > /etc/modules-load.d/amlogic.conf
+# GPU clock: panfrost has no DVFS on S922X (no mali-supply regulator in DTB),
+# so the GPU defaults to 24MHz crystal. Set to 800MHz via HHI register at boot.
+COPY variants/odroid-go-ultra/files/usr/local/bin/set-gpu-clock.py /usr/local/bin/set-gpu-clock.py
+COPY variants/odroid-go-ultra/files/etc/systemd/system/gpu-clock.service /etc/systemd/system/gpu-clock.service
+RUN chmod +x /usr/local/bin/set-gpu-clock.py && \
+    systemctl enable gpu-clock.service
 
-# Install Fedora's ARM device trees
-RUN dnf install -y kernel-modules && dnf clean all
-
-# Create symlink for device trees - Fedora installs them to /usr/lib/linux-<version>/dtb
-RUN mkdir -p /boot/dtb && \
-    ln -sf /usr/lib/linux-*/dtb/amlogic/*.dtb /boot/dtb/ || true
-
-# Create extlinux configuration for U-Boot
-# Using fdtdir instead of fdt to let U-Boot find the right DTB
-RUN mkdir -p /boot/extlinux && \
-    cat > /boot/extlinux/extlinux.conf <<'EOF'
-default fedora
-timeout 30
-
-label fedora
-    kernel /vmlinuz
-    initrd /initramfs.img
-    fdtdir /dtb
-    append root=LABEL=root rw rootwait console=ttyAML0,115200n8 console=tty1 quiet splash
-EOF
+# Install the extlinux update script and service
+# U-Boot's distro boot reads extlinux.conf but NOT BLS entries, so we
+# generate extlinux.conf from the ostree BLS entry on every boot.
+COPY variants/odroid-go-ultra/files/usr/local/bin/update-extlinux.sh /usr/local/bin/update-extlinux.sh
+COPY variants/odroid-go-ultra/files/etc/systemd/system/update-extlinux.service /etc/systemd/system/update-extlinux.service
+RUN chmod +x /usr/local/bin/update-extlinux.sh && \
+    systemctl enable update-extlinux.service
 
 # First boot partition resize with auto-detection
-RUN cat > /usr/lib/systemd/system/growfs.service <<'EOF'
-[Unit]
-Description=Grow root partition on first boot
-Before=local-fs-pre.target
-DefaultDependencies=no
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/growfs.sh
-StandardOutput=journal
-
-[Install]
-WantedBy=sysinit.target
-EOF
-
-RUN cat > /usr/local/bin/growfs.sh <<'EOF'
-#!/bin/bash
-# Auto-detect root device and grow partition
-ROOT_DEV=$(findmnt -n -o SOURCE /)
-ROOT_DISK=$(lsblk -no pkname "$ROOT_DEV")
-
-if [[ "$ROOT_DISK" == "mmcblk1" ]]; then
-    echo "Detected eMMC storage, growing partition..."
-    growpart /dev/mmcblk1 2 && resize2fs /dev/mmcblk1p2
-elif [[ "$ROOT_DISK" == "mmcblk0" ]]; then
-    echo "Detected SD card storage, growing partition..."
-    growpart /dev/mmcblk0 2 && resize2fs /dev/mmcblk0p2
-else
-    echo "Unknown storage device: $ROOT_DISK"
-fi
-EOF
-
+COPY variants/odroid-go-ultra/files/usr/lib/systemd/system/growfs.service /usr/lib/systemd/system/growfs.service
+COPY variants/odroid-go-ultra/files/usr/local/bin/growfs.sh /usr/local/bin/growfs.sh
 RUN chmod +x /usr/local/bin/growfs.sh && \
     systemctl enable growfs.service
+
+# USB gadget networking (headless SSH access over USB-C)
+COPY variants/odroid-go-ultra/files/usr/local/bin/usb-gadget.sh /usr/local/bin/usb-gadget.sh
+COPY variants/odroid-go-ultra/files/etc/usb-gadgets/net-ecm /etc/usb-gadgets/net-ecm
+COPY variants/odroid-go-ultra/files/etc/systemd/system/usb-gadget.service /etc/systemd/system/usb-gadget.service
+COPY variants/odroid-go-ultra/files/etc/systemd/system/dnsmasq-usb0.service /etc/systemd/system/dnsmasq-usb0.service
+COPY variants/odroid-go-ultra/files/etc/dnsmasq.d/usb-gadget /etc/dnsmasq.d/usb-gadget
+COPY variants/odroid-go-ultra/files/etc/modules-load.d/gadget.conf /etc/modules-load.d/gadget.conf
+RUN chmod +x /usr/local/bin/usb-gadget.sh && \
+    touch /etc/fstab && \
+    grep -q configfs /etc/fstab || echo 'configfs /sys/kernel/config configfs defaults 0 0' >> /etc/fstab && \
+    systemctl disable dnsmasq.service && \
+    systemctl enable dnsmasq-usb0.service && \
+    systemctl enable usb-gadget.service
+
+# === Wayland desktop (niri + niri-nav gamepad navigation) ===
+
+# Install niri-nav binary, gamepad-merger, osk-overlay, and joystick-cursor from build stage
+COPY --from=niri-nav-builder /build/target/release/niri-nav /usr/local/bin/niri-nav
+COPY --from=niri-nav-builder /build/gamepad-merger /usr/local/bin/gamepad-merger
+COPY --from=niri-nav-builder /build/osk-overlay /usr/local/bin/osk-overlay
+COPY --from=niri-nav-builder /build/joystick-cursor /usr/local/bin/joystick-cursor
+
+# Install niri config for all users (panfrost renders on renderD128, displays via meson-drm card0)
+RUN mkdir -p /etc/skel/.config/niri
+COPY variants/odroid-go-ultra/niri-nav/niri-config.kdl /etc/skel/.config/niri/config.kdl
+
+# Autologin on tty1 - required for seat0 so niri can access DRM
+COPY variants/odroid-go-ultra/files/etc/systemd/system/getty@tty1.service.d/autologin.conf /etc/systemd/system/getty@tty1.service.d/autologin.conf
+
+# App launcher script (fzf-based, runs in alacritty as a regular niri window)
+COPY variants/odroid-go-ultra/files/usr/local/bin/app-launcher.sh /usr/local/bin/app-launcher.sh
+RUN chmod +x /usr/local/bin/app-launcher.sh
+
+# Auto-start niri on tty1 login (only on physical console, not SSH)
+COPY variants/odroid-go-ultra/files/etc/profile.d/niri-autostart.sh /etc/profile.d/niri-autostart.sh
+
+# niri-nav systemd user service (auto-starts with user session on TTY1)
+COPY variants/odroid-go-ultra/files/usr/lib/systemd/user/niri-nav.service /usr/lib/systemd/user/niri-nav.service
+RUN systemctl --global enable niri-nav.service
+# osk-overlay is spawned/killed by niri-nav when entering/leaving TEXT_ENTRY mode
+# joystick-cursor is spawned by niri-nav at startup (analog stick → cursor movement)
+
+# === Emulation environment (cage + ES-DE + RetroArch + AetherSX2 on TTY2) ===
+
+# Install cage (Wayland kiosk compositor)
+COPY --from=cage-builder /build/cage/builddir/cage /usr/local/bin/cage
+
+# Install ES-DE (EmulationStation Desktop Edition)
+COPY --from=esde-builder /output/ /
+
+# Install vt-switch-monitor (L1+R1+Select -> chvt 1 on TTY2 side)
+COPY --from=niri-nav-builder /build/vt-switch-monitor /usr/local/bin/vt-switch-monitor
+
+# Install AetherSX2 (PS2 emulator - ROCKNIX binary v1.5-3606)
+RUN cd /tmp && \
+    curl -L -o aethersx2.AppImage \
+      https://github.com/ROCKNIX/packages/raw/main/aethersx2-sa-v1.5-3606.AppImage && \
+    chmod +x aethersx2.AppImage && \
+    ./aethersx2.AppImage --appimage-extract && \
+    mkdir -p /usr/local/share/aethersx2-sa && \
+    cp -r squashfs-root/* /usr/local/share/aethersx2-sa/ && \
+    rm -rf aethersx2.AppImage squashfs-root
+# Wrapper script: sets PAN_I_WANT_A_BROKEN_VULKAN_DRIVER and cd's to correct dir
+COPY variants/odroid-go-ultra/files/usr/local/bin/aethersx2 /usr/local/bin/aethersx2
+RUN chmod +x /usr/local/bin/aethersx2
+
+# Autologin on tty2 for emulation environment
+COPY variants/odroid-go-ultra/files/etc/systemd/system/getty@tty2.service.d/autologin.conf /etc/systemd/system/getty@tty2.service.d/autologin.conf
+
+# Auto-start cage + ES-DE on tty2 login
+COPY variants/odroid-go-ultra/files/etc/profile.d/emulation-autostart.sh /etc/profile.d/emulation-autostart.sh
+
+# Emulation launch wrapper (starts cage + vt-switch-monitor + ES-DE)
+COPY variants/odroid-go-ultra/files/usr/local/bin/emulation-launch.sh /usr/local/bin/emulation-launch.sh
+RUN chmod +x /usr/local/bin/emulation-launch.sh
+
+# Allow levi to run chvt without password (for VT switching between TTY1/TTY2)
+COPY variants/odroid-go-ultra/files/etc/sudoers.d/vt-switch /etc/sudoers.d/vt-switch
+RUN chmod 440 /etc/sudoers.d/vt-switch
+
+# ES-DE custom system definitions (PS2 via AetherSX2)
+RUN mkdir -p /etc/skel/ES-DE/custom_systems
+COPY variants/odroid-go-ultra/files/etc/skel/.config/es-de/custom_systems/es_systems.xml /etc/skel/ES-DE/custom_systems/es_systems.xml
+
+# RetroArch defaults (Vulkan, Wayland, udev input)
+RUN mkdir -p /etc/skel/.config/retroarch
+COPY variants/odroid-go-ultra/files/etc/skel/.config/retroarch/retroarch.cfg /etc/skel/.config/retroarch/retroarch.cfg
+
+# AetherSX2 defaults (S922X-tuned settings)
+RUN mkdir -p /etc/skel/.config/aethersx2/inis
+COPY variants/odroid-go-ultra/files/etc/skel/.config/aethersx2/inis/PCSX2.ini /etc/skel/.config/aethersx2/inis/PCSX2.ini
+
+# === Boot speed: mask services that cause timeouts on this hardware ===
+# boot-efi.mount: bootc creates an EFI mount but this device uses U-Boot MBR boot,
+# so the EFI partition UUID doesn't exist, causing a 44-second device timeout.
+# NFS: not used on this handheld; nfs-client.target adds to the boot critical chain.
+RUN systemctl mask boot-efi.mount nfs-client.target gssproxy.service \
+    rpc-statd.service rpcbind.service rpcbind.socket
+
+# Embed bootc-image-builder config so the image declares its own partitioning needs
+COPY variants/odroid-go-ultra/config.toml /usr/lib/bootc-image-builder/config.toml
 
 # Run bootc lint
 RUN bootc container lint || true

@@ -1,67 +1,111 @@
-# U-Boot builder for Odroid Go Ultra (Amlogic S922X)
-# This container only builds and outputs the bootloader
-# NOTE: Using x86_64 platform because Linaro toolchains are x86_64 binaries
+# U-Boot builder for ODROID Go Ultra (Amlogic S922X)
+#
+# Builds the ROCKNIX vendor U-Boot (Hardkernel v2015.01 fork) with signed FIP.
+# This is the ONLY U-Boot known to boot on OGU hardware - mainline does NOT work.
+#
+# The FIP signing uses Amlogic vendor blobs committed in the U-Boot source tree
+# (fip/g12b/), NOT LibreELEC's amlogic-boot-fip. The aml_encrypt_g12b signing
+# tool is an x86_64 binary, so this MUST build on amd64.
+#
+# Output:
+#   /u-boot.bin  - Signed FIP (write with: dd bs=512 seek=1)
+#   /res/        - Splash screen BMPs for OGU display
+#
+# NOTE: Uses Linaro GCC 4.9.4 to match ROCKNIX's toolchain exactly.
 FROM --platform=linux/amd64 docker.io/library/ubuntu:22.04 AS uboot-builder
 
-# Install build dependencies including modern GCC cross-compiler
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
-    gcc-aarch64-linux-gnu \
-    gcc-arm-none-eabi \
-    device-tree-compiler \
-    python3 \
-    python3-dev \
-    python3-setuptools \
-    python3-pyelftools \
-    swig \
-    libssl-dev \
-    libgnutls28-dev \
-    libuuid1 \
-    uuid-dev \
-    git \
     make \
     bc \
     bison \
     flex \
+    python3 \
+    python-is-python3 \
+    git \
+    wget \
+    xz-utils \
+    libssl-dev \
+    device-tree-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Set build environment - use Ubuntu's modern GCC
-ENV ARCH=arm
-ENV CROSS_COMPILE=aarch64-linux-gnu-
+# Download Linaro GCC 4.9.4-2017.01 toolchains (matching ROCKNIX exactly)
+# aarch64-elf: for U-Boot (BL33) and main firmware
+# arm-eabi: for BL301 SCP task firmware (Cortex-M3)
+RUN wget -q https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/aarch64-elf/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz && \
+    tar xf gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz -C /opt/ && \
+    rm gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz && \
+    wget -q https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/arm-eabi/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz && \
+    tar xf gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz -C /opt/ && \
+    rm gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz
 
-# Clone RocknixOS U-Boot fork (they maintain the OGU bootloader)
-RUN git clone --depth 1 https://github.com/ROCKNIX/u-boot.git /u-boot
+ENV PATH="/opt/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf/bin:/opt/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi/bin:${PATH}"
+
+# Clone ROCKNIX's U-Boot fork
+# This is Hardkernel's vendor U-Boot with ROCKNIX patches for:
+# - extlinux/sysboot support
+# - mainline kernel LCD compatibility
+# - fdtoverlay support
+RUN git clone --depth 1 --branch odroidgoU-v2015.01 \
+    https://github.com/ROCKNIX/u-boot.git /u-boot
 
 WORKDIR /u-boot
 
-# Build U-Boot for Odroid Go Ultra
-RUN make mrproper
-RUN make odroid-go-ultra_defconfig
-RUN make -j$(nproc) HOSTCC="gcc" HOSTSTRIP="true"
+# Ensure vendor signing tools are executable
+RUN chmod +x fip/g12b/aml_encrypt_g12b fip/fip_create 2>/dev/null || true
 
-# Find and copy the U-Boot output
-RUN mkdir -p /output && \
-    find . -name "u-boot.bin*" -o -name "u-boot.img" -o -name "*.bin" | head -20 > /output/files.txt && \
-    if [ -f sd_fuse/u-boot.bin ]; then \
-        cp sd_fuse/u-boot.bin /output/u-boot.bin.sd.bin; \
-    elif [ -f u-boot.bin ]; then \
-        cp u-boot.bin /output/u-boot.bin.sd.bin; \
+# Build U-Boot for ODROID Go Ultra
+# ARCH=arm is correct - Amlogic vendor BSP convention for U-Boot 2015.01
+# The default make target builds u-boot.bin (BL33), BL301 from source,
+# then runs the FIP signing/assembly via fip/Makefile
+#
+# IMPORTANT: CFLAGS/LDFLAGS must be set as environment variables (before make),
+# NOT as make command-line arguments (after make). Make command-line variables
+# cannot be overridden by Makefile assignments, which breaks the ACS firmware
+# sub-make: its `CFLAGS += ${FIRMWARE_CPPFLAGS}` is silently ignored, losing
+# all -I include paths and causing "asm/arch/acs.h: No such file" errors.
+# ROCKNIX does it correctly: CFLAGS="" LDFLAGS="" make ...
+RUN make mrproper && \
+    CROSS_COMPILE=aarch64-elf- ARCH=arm CFLAGS="" LDFLAGS="" \
+        make odroidgou_defconfig && \
+    CROSS_COMPILE=aarch64-elf- ARCH=arm CFLAGS="" LDFLAGS="" \
+        make HOSTCC="gcc" HOSTSTRIP="true" -j$(nproc)
+
+# Verify the signed FIP was produced
+# With KBUILD_OUTPUT=build, output may be in build/sd_fuse/ or sd_fuse/
+RUN UBOOT_BIN="" && \
+    for p in sd_fuse/u-boot.bin build/sd_fuse/u-boot.bin fip/u-boot.bin.sd.bin build/fip/u-boot.bin.sd.bin; do \
+        if [ -f "$p" ]; then UBOOT_BIN="$p"; break; fi; \
+    done && \
+    if [ -z "${UBOOT_BIN}" ]; then \
+        echo "ERROR: FIP build did not produce u-boot.bin!" && \
+        echo "Checking known locations:" && \
+        ls -la sd_fuse/ 2>/dev/null; \
+        ls -la build/sd_fuse/ 2>/dev/null; \
+        ls -la fip/ 2>/dev/null; \
+        ls -la build/fip/ 2>/dev/null; \
+        find . -name 'u-boot.bin*' -not -path './.git/*' 2>/dev/null; \
+        exit 1; \
+    fi && \
+    SIZE=$(stat -c%s "${UBOOT_BIN}") && \
+    echo "Found: ${UBOOT_BIN} (${SIZE} bytes, $(( SIZE / 1024 ))KB)" && \
+    if [ "${SIZE}" -lt 500000 ]; then \
+        echo "WARNING: FIP seems too small (${SIZE} bytes)" && exit 1; \
     else \
-        echo "ERROR: Could not find u-boot.bin!" && cat /output/files.txt && exit 1; \
-    fi
+        echo "Verified: vendor FIP looks good"; \
+    fi && \
+    mkdir -p /output && cp "${UBOOT_BIN}" /output/u-boot.bin
 
-# Create metadata about the bootloader
-RUN echo "Odroid Go Ultra U-Boot (Hardkernel Fork)" > /output/README.txt && \
-    echo "Version: odroidgoU-v2015.01" >> /output/README.txt && \
+# Collect remaining outputs
+RUN mkdir -p /output/res && \
+    cp -r tools/odroid_resource/res/* /output/res/ 2>/dev/null || true && \
+    echo "ROCKNIX vendor U-Boot for ODROID Go Ultra" > /output/README.txt && \
+    echo "Source: ROCKNIX/u-boot (odroidgoU-v2015.01)" >> /output/README.txt && \
     echo "Built: $(date)" >> /output/README.txt && \
-    echo "Source: https://github.com/hardkernel/u-boot.git" >> /output/README.txt && \
-    echo "" >> /output/README.txt && \
-    echo "Files:" >> /output/README.txt && \
-    echo "  u-boot.bin.sd.bin - Signed bootloader for SD/eMMC (install at 1MB offset)" >> /output/README.txt && \
-    echo "  u-boot-raw.bin - Raw U-Boot binary" >> /output/README.txt && \
-    echo "" >> /output/README.txt && \
-    echo "Installation:" >> /output/README.txt && \
-    echo "  dd if=u-boot.bin.sd.bin of=/dev/mmcblk0 bs=512 seek=2048 conv=notrunc" >> /output/README.txt
+    echo "Install: dd if=u-boot.bin of=/dev/mmcblkX bs=512 seek=1 conv=notrunc" >> /output/README.txt
 
 # Final stage - just the outputs
 FROM scratch
-COPY --from=uboot-builder /output/ /
+COPY --from=uboot-builder /output/u-boot.bin /u-boot.bin
+COPY --from=uboot-builder /output/res/ /res/
+COPY --from=uboot-builder /output/README.txt /README.txt
