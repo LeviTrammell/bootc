@@ -8,17 +8,26 @@ ARG KERNEL_IMAGE=${BASE_REPO}/odroid-go-ultra-kernel
 # Kernel container is built natively on arm64
 FROM --platform=linux/arm64 ${KERNEL_IMAGE} AS custom-kernel
 
-# Build niri-nav gamepad navigation daemon + gamepad-merger + joystick-cursor
+# Build the Rust workspace (niri-nav gamepad router + controller-shell
+# overlay) plus the C helpers (gamepad-merger, osk-overlay, joystick-cursor)
 FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS niri-nav-builder
 RUN dnf install -y rust cargo gcc glibc-static gtk4-devel gtk4-layer-shell-devel pkg-config \
     wayland-devel wlr-protocols-devel && dnf clean all
-COPY variants/odroid-go-ultra/niri-nav/ /build/
+# niri-nav depends on the cs-proto path crate, so the whole cargo
+# workspace comes along (cursor-daemon is a member but only built for
+# the HTPC variant).
+COPY Cargo.toml Cargo.lock /build/
+COPY cs-proto/ /build/cs-proto/
+COPY niri-nav/ /build/niri-nav/
+COPY controller-shell/ /build/controller-shell/
+COPY cursor-daemon/ /build/cursor-daemon/
 WORKDIR /build
-RUN cargo build --release
+# OGU uses niri-nav's default 'ogu' cargo feature.
+RUN cargo build --release -p niri-nav -p controller-shell
 # Build gamepad-merger (merges 3 evdev devices into one virtual gamepad via uinput)
-RUN gcc -o /build/gamepad-merger /build/gamepad-merger.c -O2 -lm
+RUN gcc -o /build/gamepad-merger /build/niri-nav/gamepad-merger.c -O2 -lm
 # Build osk-overlay (GTK4 + gtk-layer-shell on-screen keyboard overlay)
-RUN gcc -o /build/osk-overlay /build/osk-overlay.c \
+RUN gcc -o /build/osk-overlay /build/niri-nav/osk-overlay.c \
     $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
 # Build joystick-cursor (analog stick → Wayland virtual pointer via wlr protocol)
 RUN wayland-scanner client-header \
@@ -27,8 +36,8 @@ RUN wayland-scanner client-header \
     wayland-scanner private-code \
       /usr/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml \
       /build/vptr-code.c && \
-    gcc -o /build/joystick-cursor /build/joystick-cursor.c /build/vptr-code.c \
-      $(pkg-config --cflags --libs wayland-client) -lm
+    gcc -o /build/joystick-cursor /build/niri-nav/joystick-cursor.c /build/vptr-code.c \
+      -I/build $(pkg-config --cflags --libs wayland-client) -lm
 # Build vt-switch-monitor (L1+R1+Select -> chvt for TTY2 emulation side)
 COPY variants/odroid-go-ultra/files/usr/local/bin/vt-switch-monitor.c /tmp/vt-switch-monitor.c
 RUN gcc -static -o /build/vt-switch-monitor /tmp/vt-switch-monitor.c
@@ -88,8 +97,6 @@ RUN dnf install -y \
     gtk4 \
     gtk4-layer-shell \
     alacritty \
-    fzf \
-    nwg-drawer \
     ydotool \
     grim \
     wlrctl \
@@ -213,24 +220,21 @@ RUN chmod +x /usr/local/bin/usb-gadget.sh && \
     systemctl enable dnsmasq-usb0.service && \
     systemctl enable usb-gadget.service
 
-# === Wayland desktop (niri + niri-nav gamepad navigation) ===
+# === Wayland desktop (niri + niri-nav gamepad navigation + controller-shell) ===
 
-# Install niri-nav binary, gamepad-merger, osk-overlay, and joystick-cursor from build stage
+# Install niri-nav, controller-shell, gamepad-merger, osk-overlay, and joystick-cursor from build stage
 COPY --from=niri-nav-builder /build/target/release/niri-nav /usr/local/bin/niri-nav
+COPY --from=niri-nav-builder /build/target/release/controller-shell /usr/local/bin/controller-shell
 COPY --from=niri-nav-builder /build/gamepad-merger /usr/local/bin/gamepad-merger
 COPY --from=niri-nav-builder /build/osk-overlay /usr/local/bin/osk-overlay
 COPY --from=niri-nav-builder /build/joystick-cursor /usr/local/bin/joystick-cursor
 
 # Install niri config for all users (panfrost renders on renderD128, displays via meson-drm card0)
 RUN mkdir -p /etc/skel/.config/niri
-COPY variants/odroid-go-ultra/niri-nav/niri-config.kdl /etc/skel/.config/niri/config.kdl
+COPY variants/odroid-go-ultra/files/niri-config.kdl /etc/skel/.config/niri/config.kdl
 
 # Autologin on tty1 - required for seat0 so niri can access DRM
 COPY variants/odroid-go-ultra/files/etc/systemd/system/getty@tty1.service.d/autologin.conf /etc/systemd/system/getty@tty1.service.d/autologin.conf
-
-# App launcher script (fzf-based, runs in alacritty as a regular niri window)
-COPY variants/odroid-go-ultra/files/usr/local/bin/app-launcher.sh /usr/local/bin/app-launcher.sh
-RUN chmod +x /usr/local/bin/app-launcher.sh
 
 # Auto-start niri on tty1 login (only on physical console, not SSH)
 COPY variants/odroid-go-ultra/files/etc/profile.d/niri-autostart.sh /etc/profile.d/niri-autostart.sh
@@ -240,6 +244,13 @@ COPY variants/odroid-go-ultra/files/usr/lib/systemd/user/niri-nav.service /usr/l
 RUN systemctl --global enable niri-nav.service
 # osk-overlay is spawned/killed by niri-nav when entering/leaving TEXT_ENTRY mode
 # joystick-cursor is spawned by niri-nav at startup (analog stick → cursor movement)
+
+# controller-shell overlay: the console home screen (mode tiles + app
+# launcher). Starts visible; niri-nav boots into Shell mode and forwards
+# gamepad intent over the controller-shell socket.
+COPY variants/odroid-go-ultra/files/usr/lib/systemd/user/controller-shell.service /usr/lib/systemd/user/controller-shell.service
+COPY variants/odroid-go-ultra/files/etc/controller-shell/config.json /etc/controller-shell/config.json
+RUN systemctl --global enable controller-shell.service
 
 # === Emulation environment (cage + ES-DE + RetroArch + AetherSX2 on TTY2) ===
 

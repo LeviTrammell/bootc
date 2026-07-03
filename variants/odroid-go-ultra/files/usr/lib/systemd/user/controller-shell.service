@@ -1,0 +1,18 @@
+[Unit]
+Description=controller-shell overlay (mode tiles + app launcher)
+StartLimitIntervalSec=60
+StartLimitBurst=15
+
+[Service]
+ExecStart=/usr/local/bin/controller-shell
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Boot straight into the shell (PSP-style home screen); niri-nav's
+# initial Shell mode matches.
+Environment=CONTROLLER_SHELL_START_VISIBLE=1
+
+[Install]
+WantedBy=default.target

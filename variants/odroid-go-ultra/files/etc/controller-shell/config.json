@@ -1,0 +1,39 @@
+{
+  "tiles": [
+    {
+      "key": "emulation",
+      "label": "Games",
+      "icon": "applications-games-symbolic",
+      "nav_mode": "emulation"
+    },
+    {
+      "key": "apps",
+      "label": "Apps",
+      "icon": "view-grid-symbolic",
+      "view": "apps"
+    },
+    {
+      "key": "terminal",
+      "label": "Terminal",
+      "icon": "utilities-terminal-symbolic",
+      "exec": ["niri", "msg", "action", "spawn", "--", "alacritty"],
+      "nav_mode": "window_nav"
+    },
+    {
+      "key": "restart",
+      "label": "Restart",
+      "icon": "system-reboot-symbolic",
+      "exec": ["systemctl", "reboot"]
+    },
+    {
+      "key": "poweroff",
+      "label": "Power Off",
+      "icon": "system-shutdown-symbolic",
+      "exec": ["systemctl", "poweroff"]
+    }
+  ],
+  "app_launch_nav_mode": "window_nav",
+  "exit_nav_mode": "window_nav",
+  "launch_via_niri": true,
+  "terminal_prefix": ["alacritty", "-e"]
+}

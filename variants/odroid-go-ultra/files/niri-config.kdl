@@ -30,8 +30,8 @@ window-rule {
     geometry-corner-radius 0 0 0 0
 }
 
-spawn-at-startup "alacritty"
-// spawn-at-startup "niri-nav"  // managed by systemd user service instead
+// niri-nav and controller-shell are systemd user services; the shell
+// starts visible as the boot home screen, so nothing needs spawning here.
 // osk-overlay is spawned by niri-nav when entering TEXT_ENTRY mode
 
 environment {
