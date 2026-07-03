@@ -32,12 +32,34 @@ RUN apt-get update && apt-get install -y \
 # Download Linaro GCC 4.9.4-2017.01 toolchains (matching ROCKNIX exactly)
 # aarch64-elf: for U-Boot (BL33) and main firmware
 # arm-eabi: for BL301 SCP task firmware (Cortex-M3)
-RUN wget -q https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/aarch64-elf/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz && \
-    tar xf gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz -C /opt/ && \
-    rm gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz && \
-    wget -q https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/arm-eabi/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz && \
-    tar xf gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz -C /opt/ && \
-    rm gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz
+#
+# Fallback: releases.linaro.org has outages; the Armbian mirror carries the
+# same GCC 4.9.4 release but only the *-linux-gnu variants (which Hardkernel's
+# own docs use for this U-Boot). Symlink the bare-metal binary names onto
+# them so CROSS_COMPILE=aarch64-elf- and the FIP Makefile's hardcoded
+# arm-eabi- prefix keep working either way.
+RUN set -e; \
+    if wget -q --timeout=30 --tries=2 https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/aarch64-elf/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz && \
+       wget -q --timeout=30 --tries=2 https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/arm-eabi/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz; then \
+        tar xf gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf.tar.xz -C /opt/; \
+        tar xf gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi.tar.xz -C /opt/; \
+        rm gcc-linaro-*.tar.xz; \
+    else \
+        echo "releases.linaro.org unreachable - using Armbian mirror (linux-gnu variants)"; \
+        rm -f gcc-linaro-*.tar.xz; \
+        wget -q https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz; \
+        wget -q https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz; \
+        tar xf gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz -C /opt/; \
+        tar xf gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi.tar.xz -C /opt/; \
+        rm gcc-linaro-*.tar.xz; \
+        mkdir -p /opt/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf/bin /opt/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi/bin; \
+        for t in /opt/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-*; do \
+            ln -s "$t" "/opt/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf/bin/aarch64-elf-${t##*/aarch64-linux-gnu-}"; \
+        done; \
+        for t in /opt/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-*; do \
+            ln -s "$t" "/opt/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi/bin/arm-eabi-${t##*/arm-linux-gnueabi-}"; \
+        done; \
+    fi
 
 ENV PATH="/opt/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-elf/bin:/opt/gcc-linaro-4.9.4-2017.01-x86_64_arm-eabi/bin:${PATH}"
 
