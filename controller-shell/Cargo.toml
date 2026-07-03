@@ -1,0 +1,27 @@
+[package]
+name = "controller-shell"
+version = "0.1.0"
+edition = "2021"
+
+# Persistent gtk4-layer-shell overlay that surfaces controller-driven UX
+# on niri: mode tiles (per-variant via /etc/controller-shell/config.json),
+# app launcher (.desktop discovery), context menu, and on-screen keyboard.
+# Talks to whichever nav adapter (niri-nav, hyprland-nav, ...) is active
+# via the cs-proto wire protocol — nothing here is niri-specific beyond
+# the layer-shell binding.
+
+[dependencies]
+cs-proto = { path = "../cs-proto" }
+
+gtk4 = { version = "0.9", features = ["v4_12"] }
+gtk4-layer-shell = "0.5"
+glib = "0.20"
+gio = "0.20"
+dirs = "5"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+libc = { workspace = true }

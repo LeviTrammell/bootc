@@ -1,0 +1,18 @@
+[package]
+name = "cursor-daemon"
+version = "0.1.0"
+edition = "2021"
+
+# Tiny daemon that reads a gamepad's analog sticks + face buttons via
+# evdev and drives a Wayland virtual pointer via the wlr-virtual-pointer
+# protocol. Activated by the nav adapter when entering Desktop mode.
+# No wire protocol — process lifecycle alone signals when to run.
+
+[dependencies]
+evdev = "0.12"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

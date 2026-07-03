@@ -1,0 +1,252 @@
+/* Catppuccin Mocha-inspired palette, sized for couch / TV viewing. */
+
+window.background {
+    background-color: rgba(17, 17, 27, 0.94);
+}
+
+window.background.transparent {
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.root {
+    padding: 56px 0 24px 0;
+}
+
+.header {
+    margin-bottom: 8px;
+}
+
+.title {
+    color: #cdd6f4;
+    font-size: 40px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.section-label {
+    color: #a6adc8;
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    margin: 8px 0;
+}
+
+.hint-bar {
+    color: #6c7086;
+    font-size: 16px;
+    margin-top: 12px;
+}
+
+.mode-row {
+    padding: 16px 0;
+}
+
+button.tile {
+    background: rgba(49, 50, 68, 0.7);
+    border: 2px solid transparent;
+    border-radius: 20px;
+    padding: 24px 20px;
+    transition: all 120ms ease-out;
+}
+
+button.mode-tile {
+    min-width: 180px;
+    min-height: 200px;
+    padding: 32px 24px;
+    border-radius: 24px;
+}
+
+button.app-tile {
+    min-width: 160px;
+    min-height: 160px;
+    padding: 18px 12px;
+}
+
+button.tile:hover,
+button.tile.focused {
+    background: linear-gradient(135deg, rgba(137, 180, 250, 0.28), rgba(203, 166, 247, 0.22));
+    border-color: #89b4fa;
+}
+
+button.tile.focused {
+    box-shadow: 0 0 0 4px rgba(137, 180, 250, 0.55),
+                0 14px 36px rgba(0, 0, 0, 0.65);
+}
+
+button.tile image.tile-icon {
+    color: #cdd6f4;
+    -gtk-icon-style: regular;
+}
+
+button.mode-tile image.tile-icon {
+    -gtk-icon-style: symbolic;
+}
+
+.tile-label {
+    color: #cdd6f4;
+    font-size: 18px;
+    font-weight: 500;
+}
+
+button.mode-tile .tile-label {
+    font-size: 22px;
+}
+
+button.tile.focused .tile-label {
+    color: #f5e0dc;
+}
+
+/* Compact metrics for small panels (OGU 854x480). The .compact class is
+ * added to .root at startup when the output is narrower than 1024px. */
+
+.compact.root {
+    padding: 12px 0 8px 0;
+}
+
+.compact .title {
+    font-size: 22px;
+}
+
+.compact .section-label {
+    font-size: 15px;
+    margin: 2px 0;
+}
+
+.compact .hint-bar {
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.compact button.mode-tile {
+    min-width: 108px;
+    min-height: 120px;
+    padding: 14px 10px;
+    border-radius: 16px;
+}
+
+.compact button.app-tile {
+    min-width: 96px;
+    min-height: 96px;
+    padding: 10px 6px;
+}
+
+.compact .tile-label {
+    font-size: 12px;
+}
+
+.compact button.mode-tile .tile-label {
+    font-size: 14px;
+}
+
+/* Context menu popover (Triangle/Y) — PS-style options panel anchored
+ * to the focused tile. */
+
+popover.context-menu > arrow,
+popover.context-menu > contents {
+    background-color: #1e1e2e;
+    border: 1px solid rgba(137, 180, 250, 0.35);
+}
+
+popover.context-menu > contents {
+    padding: 12px;
+    border-radius: 14px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7);
+    min-width: 260px;
+}
+
+.context-header {
+    color: #a6adc8;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    padding-left: 8px;
+}
+
+button.context-item {
+    background: transparent;
+    border: 2px solid transparent;
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+button.context-item:hover,
+button.context-item.focused {
+    background: rgba(137, 180, 250, 0.18);
+    border-color: rgba(137, 180, 250, 0.6);
+}
+
+button.context-item.focused {
+    box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.45);
+}
+
+.context-icon {
+    color: #cdd6f4;
+    -gtk-icon-style: symbolic;
+}
+
+.context-label {
+    color: #cdd6f4;
+    font-size: 18px;
+}
+
+button.context-item.focused .context-label {
+    color: #f5e0dc;
+}
+
+/* On-screen keyboard (Square / X-button) */
+
+.osk-floating {
+    background-color: #1e1e2e;
+    border: 1px solid rgba(137, 180, 250, 0.4);
+    border-radius: 18px;
+    padding: 18px 22px;
+    margin: 0 0 32px 0;
+    box-shadow: 0 22px 50px rgba(0, 0, 0, 0.7);
+}
+
+.osk {
+    margin: 0;
+}
+
+.osk-row {
+    padding: 0;
+}
+
+button.osk-key {
+    background: rgba(49, 50, 68, 0.85);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    min-width: 64px;
+    min-height: 64px;
+    padding: 10px 12px;
+    transition: all 90ms ease-out;
+}
+
+button.osk-key.osk-wide {
+    min-width: 120px;
+}
+
+button.osk-key.osk-mod {
+    background: rgba(69, 71, 90, 0.85);
+}
+
+button.osk-key:hover,
+button.osk-key.focused {
+    background: linear-gradient(135deg, rgba(137, 180, 250, 0.42), rgba(203, 166, 247, 0.32));
+    border-color: #89b4fa;
+}
+
+button.osk-key.focused {
+    box-shadow: 0 0 0 3px rgba(137, 180, 250, 0.65);
+}
+
+.osk-key-label {
+    color: #cdd6f4;
+    font-size: 24px;
+    font-weight: 500;
+}
+
+button.osk-key.focused .osk-key-label {
+    color: #f5e0dc;
+}
