@@ -2,6 +2,9 @@
 dist
 firmware
 
+# Rust/cargo build output — workspace root and any per-crate target dirs
+target/
+
 # Large/flashable disk images (e.g. rocknix-fat.img) — never commit these
 *.img
 
