@@ -37,11 +37,17 @@ RUN apt-get update && apt-get install -y \
 
 ENV ARCH=arm64
 
-# Download kernel source
+# Download kernel source. cdn.kernel.org purges superseded stable point
+# releases, so fall back to git.kernel.org's stable snapshot (generated
+# from the release tag, always available for pinned versions).
 RUN MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
-    wget -q https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz && \
-    tar xf linux-${KERNEL_VERSION}.tar.xz && \
-    rm linux-${KERNEL_VERSION}.tar.xz
+    { wget -q https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz && \
+      tar xf linux-${KERNEL_VERSION}.tar.xz && \
+      rm linux-${KERNEL_VERSION}.tar.xz; } || \
+    { rm -f linux-${KERNEL_VERSION}.tar.* && \
+      wget -q https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/snapshot/linux-${KERNEL_VERSION}.tar.gz && \
+      tar xf linux-${KERNEL_VERSION}.tar.gz && \
+      rm linux-${KERNEL_VERSION}.tar.gz; }
 
 WORKDIR /linux-${KERNEL_VERSION}
 
@@ -59,6 +65,17 @@ RUN for p in \
         echo "Applying: $(basename $p)" && \
         patch -p1 < "$p" || { echo "FAILED: $p"; exit 1; }; \
     done
+
+# Strip opp-microvolt from the GPU OPP table: the OGU's vdd_ee regulator
+# minimum (875mV) is above the OPP voltages (800mV), so panfrost's probe
+# fails with -EINVAL setting the voltage. Without opp-microvolt panfrost
+# uses the dummy regulator and probes fine (frequency-only, no DVFS -
+# gpu-clock.service sets 800MHz at boot).
+RUN DTSI=arch/arm64/boot/dts/amlogic/meson-g12-common.dtsi && \
+    sed -i '/gpu_opp_table: opp-table-gpu {/,/^\t};/{/opp-microvolt/d;}' "$DTSI" && \
+    if grep -A20 'gpu_opp_table' "$DTSI" | grep -q opp-microvolt; then \
+        echo "ERROR: opp-microvolt still present in gpu_opp_table"; exit 1; \
+    fi && echo "gpu_opp_table opp-microvolt stripped"
 
 # Start from ARM64 defconfig then apply our minimal S922X config
 COPY variants/odroid-go-ultra/kernel-config.fragment /tmp/kernel-config.fragment
