@@ -9,6 +9,7 @@
 #
 # Prerequisites:
 # - mtools (brew install mtools on macOS)
+# - e2fsprogs for debugfs (brew install e2fsprogs on macOS)
 # - python3
 # - The kernel and U-Boot containers must be built first
 #
@@ -100,8 +101,10 @@ with open('${FINAL_IMAGE}', 'rb') as f:
 P1_START=$(echo "${PART_INFO}" | head -1 | awk '{print $4}')
 P1_SECTORS=$(echo "${PART_INFO}" | head -1 | awk '{print $5}')
 P1_SIZE_BYTES=$((P1_SECTORS * 512))
+P2_START=$(echo "${PART_INFO}" | sed -n '2p' | awk '{print $4}')
 
 echo "  P1: start=${P1_START} sectors=${P1_SECTORS} (${P1_SIZE_BYTES} bytes)"
+echo "  P2: start=${P2_START}"
 
 # Find the root partition (last Linux partition = P3) and read its UUID
 ROOT_UUID=$(python3 -c "
@@ -124,6 +127,46 @@ with open('${FINAL_IMAGE}', 'rb') as f:
     print(f'{u[0]:02x}{u[1]:02x}{u[2]:02x}{u[3]:02x}-{u[4]:02x}{u[5]:02x}-{u[6]:02x}{u[7]:02x}-{u[8]:02x}{u[9]:02x}-{u[10]:02x}{u[11]:02x}{u[12]:02x}{u[13]:02x}{u[14]:02x}{u[15]:02x}')
 ")
 echo "  Root UUID: ${ROOT_UUID}"
+
+# ─── Step 4b: Extract kernel args from the ostree BLS entry on P2 ───
+# The dracut initramfs boots via ostree-prepare-root, which REQUIRES the
+# ostree= kernel argument. The BLS entry written by bootc-image-builder
+# into P2 (/boot) has the complete correct cmdline - read it out with
+# debugfs (works on a raw image via the ?offset= syntax, no mount needed).
+echo "Step 4b: Extracting kernel args from BLS entry on P2..."
+
+DEBUGFS=$(command -v debugfs || true)
+if [ -z "${DEBUGFS}" ] && command -v brew >/dev/null 2>&1; then
+    DEBUGFS="$(brew --prefix e2fsprogs 2>/dev/null)/sbin/debugfs"
+fi
+if [ -z "${DEBUGFS}" ] || [ ! -x "${DEBUGFS}" ]; then
+    echo "ERROR: debugfs not found - install e2fsprogs (brew install e2fsprogs)"
+    exit 1
+fi
+
+P2_DEV="${FINAL_IMAGE}?offset=$((P2_START * 512))"
+BLS_FILE=$("${DEBUGFS}" -R "ls -p /loader/entries" "${P2_DEV}" 2>/dev/null \
+    | awk -F/ '$6 ~ /^ostree-.*\.conf$/ {print $6}' | sort | tail -1)
+if [ -z "${BLS_FILE}" ]; then
+    echo "ERROR: No ostree BLS entry found in P2 /loader/entries"
+    exit 1
+fi
+echo "  BLS entry: ${BLS_FILE}"
+
+BLS_OPTIONS=$("${DEBUGFS}" -R "cat /loader/entries/${BLS_FILE}" "${P2_DEV}" 2>/dev/null \
+    | grep -m1 '^options ' | sed 's/^options //')
+if [ -z "${BLS_OPTIONS}" ]; then
+    echo "ERROR: BLS entry has no options line"
+    exit 1
+fi
+if ! echo "${BLS_OPTIONS}" | grep -q 'ostree='; then
+    echo "ERROR: BLS options missing ostree= argument (required by dracut ostree module)"
+    exit 1
+fi
+if ! echo "${BLS_OPTIONS}" | grep -q "${ROOT_UUID}"; then
+    echo "  WARNING: BLS options do not reference root UUID ${ROOT_UUID}"
+fi
+echo "  BLS options: ${BLS_OPTIONS}"
 
 # ─── Step 5: Inject U-Boot FIP at sector 1 ───
 echo "Step 5: Injecting U-Boot FIP at sector 1..."
@@ -172,19 +215,21 @@ with open('${FINAL_IMAGE}', 'r+b') as f:
 # ─── Step 7: Build FAT32 boot partition ───
 echo "Step 7: Building FAT32 boot partition..."
 
-# Create a FAT32 filesystem image matching P1 size
-FAT_IMG="${WORK_DIR}/boot.fat32"
-dd if=/dev/zero of="${FAT_IMG}" bs=512 count="${P1_SECTORS}" 2>/dev/null
-mkfs.fat -F 32 -n BOOT "${FAT_IMG}" >/dev/null 2>&1
+# Write directly into the FAT filesystem bootc-image-builder created
+# (mtools @@offset syntax). Do NOT reformat it: the image's boot-efi.mount
+# unit references this filesystem's UUID, and a fresh mkfs.fat serial
+# orphans that unit (42s device timeout at boot, then a failed mount).
+FAT_IMG="${FINAL_IMAGE}@@$((P1_START * 512))"
+export MTOOLS_SKIP_CHECK=1
 
 # Copy kernel Image
-mcopy -i "${FAT_IMG}" "${WORK_DIR}/kernel/Image" ::Image
+mcopy -o -i "${FAT_IMG}" "${WORK_DIR}/kernel/Image" ::Image
 echo "  Copied kernel Image (${KERNEL_MB}MB)"
 
 # Copy DTBs to partition root (ROCKNIX style - U-Boot finds them with FDTDIR /)
 for dtb in "${WORK_DIR}"/kernel/dtb/amlogic/meson-g12b-*.dtb; do
     if [ -f "${dtb}" ]; then
-        mcopy -i "${FAT_IMG}" "${dtb}" "::$(basename ${dtb})"
+        mcopy -o -i "${FAT_IMG}" "${dtb}" "::$(basename ${dtb})"
         echo "  Copied $(basename ${dtb})"
     fi
 done
@@ -201,37 +246,55 @@ if [ -n "${SYS_CONTAINER}" ]; then
     podman rm -f "${SYS_CONTAINER}" >/dev/null 2>&1
 fi
 
-if [ -f "${WORK_DIR}/kernel/initramfs.img" ]; then
-    mcopy -i "${FAT_IMG}" "${WORK_DIR}/kernel/initramfs.img" ::initramfs.img
-    INITRD_SIZE=$(stat -f%z "${WORK_DIR}/kernel/initramfs.img" 2>/dev/null || stat -c%s "${WORK_DIR}/kernel/initramfs.img")
-    echo "  Copied initramfs ($((INITRD_SIZE / 1024 / 1024))MB)"
-    INITRD_LINE="  INITRD /initramfs.img"
-else
-    echo "  WARNING: No initramfs found - booting without initrd"
-    INITRD_LINE=""
+if [ ! -f "${WORK_DIR}/kernel/initramfs.img" ]; then
+    echo "ERROR: No initramfs found in system container - cannot boot ostree without it"
+    exit 1
 fi
+
+INITRD_SIZE=$(stat -f%z "${WORK_DIR}/kernel/initramfs.img" 2>/dev/null || stat -c%s "${WORK_DIR}/kernel/initramfs.img")
+# Vendor U-Boot loads the initrd at a fixed 0x03080000 with no relocation.
+# ARM Trusted Firmware (BL31) is resident at 0x05000000; U-Boot's script
+# area is at 0x04000000. Anything over 15MB is unsafe.
+if [ "${INITRD_SIZE}" -gt 15728640 ]; then
+    echo "ERROR: initramfs is $((INITRD_SIZE / 1024 / 1024))MB (>15MB)"
+    echo "  It would overrun U-Boot's memory map when loaded at 0x03080000"
+    exit 1
+fi
+mcopy -o -i "${FAT_IMG}" "${WORK_DIR}/kernel/initramfs.img" ::initramfs.img
+echo "  Copied initramfs ($((INITRD_SIZE / 1024 / 1024))MB)"
 
 # Generate extlinux.conf
 mmd -i "${FAT_IMG}" ::extlinux 2>/dev/null || true
+
+# Kernel args: full BLS options (root=, ostree=, kargs from config.toml)
+# plus OGU-specific args not present in BLS entries.
+OGU_ARGS="rw rootwait panic=10 consoleblank=0 plymouth.enable=0 fbcon=rotate:3,font:VGA8x8"
+APPEND="${BLS_OPTIONS}"
+for arg in ${OGU_ARGS}; do
+    key="${arg%%=*}"
+    if ! echo "${APPEND}" | grep -q "${key}"; then
+        APPEND="${APPEND} ${arg}"
+    fi
+done
 
 EXTLINUX_CONTENT="default fedora
 timeout 30
 
 label fedora
   LINUX /Image
-${INITRD_LINE}
+  INITRD /initramfs.img
   FDT /meson-g12b-odroid-go-ultra.dtb
-  APPEND rdinit=/init root=UUID=${ROOT_UUID} rw rootwait panic=10 clk_ignore_unused console=ttyAML0,115200n8 console=tty0 no_console_suspend fbcon=rotate:1 consoleblank=0 plymouth.enable=0"
+  APPEND ${APPEND}"
 
 echo "${EXTLINUX_CONTENT}" > "${WORK_DIR}/extlinux.conf"
-mcopy -i "${FAT_IMG}" "${WORK_DIR}/extlinux.conf" ::extlinux/extlinux.conf
+mcopy -o -i "${FAT_IMG}" "${WORK_DIR}/extlinux.conf" ::extlinux/extlinux.conf
 echo "  Generated extlinux.conf"
 
 # Copy splash screen BMPs (vendor U-Boot displays these)
 if [ -d "${WORK_DIR}/res" ] && [ "$(ls -A ${WORK_DIR}/res/ 2>/dev/null)" ]; then
     mmd -i "${FAT_IMG}" ::res 2>/dev/null || true
     for bmp in "${WORK_DIR}"/res/*.bmp; do
-        [ -f "${bmp}" ] && mcopy -i "${FAT_IMG}" "${bmp}" ::res/
+        [ -f "${bmp}" ] && mcopy -o -i "${FAT_IMG}" "${bmp}" ::res/
     done
     echo "  Copied splash screen BMPs"
 fi
@@ -240,10 +303,7 @@ fi
 echo "  FAT32 partition contents:"
 mdir -i "${FAT_IMG}" :: 2>/dev/null | grep -v "^$" | sed 's/^/    /'
 
-# ─── Step 8: Write FAT32 to disk image ───
-echo "Step 8: Writing FAT32 boot partition to disk image..."
-dd if="${FAT_IMG}" of="${FINAL_IMAGE}" bs=512 seek="${P1_START}" conv=notrunc 2>/dev/null
-echo "  Written ${P1_SECTORS} sectors at offset ${P1_START}"
+# ─── Step 8: (removed) files were written in-place into P1 via mtools ───
 
 # ─── Step 9: Final verification ───
 echo ""

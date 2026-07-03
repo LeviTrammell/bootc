@@ -156,12 +156,35 @@ sudo dd if=dist/odroid-go-ultra/image/disk.raw \
    ├─ U-Boot (bl33)
    └─ DDR training firmware
 
-3. U-Boot reads /boot/extlinux/extlinux.conf
-   ├─ Loads /vmlinuz (kernel)
-   └─ Loads /dtb/meson-g12b-odroid-go-ultra.dtb
+3. U-Boot reads extlinux.conf from the FAT32 boot partition
+   ├─ Loads /Image (kernel) at 0x01080000
+   ├─ Loads /initramfs.img (minimal dracut) at 0x03080000
+   └─ Loads /meson-g12b-odroid-go-ultra.dtb at 0x01000000
 
-4. Boot Fedora
+4. dracut initrd: systemd + ostree-prepare-root mount the
+   ostree deployment (ostree= karg) and switch root
+
+5. Boot Fedora
 ```
+
+### Initramfs size constraint (IMPORTANT)
+
+The vendor U-Boot loads the initrd at a **fixed address 0x03080000 with no
+relocation** (`initrd_high=0xffffffff` Amlogic convention). ARM Trusted
+Firmware (BL31) is resident at 0x05000000 and the TEE (BL32) at
+0x05300000–0x07300000 — an initrd larger than ~31MB overwrites live secure
+firmware, and anything over ~15.5MB reaches U-Boot's boot script area at
+0x04000000. A stock Fedora dracut initramfs (23–80MB) breaks the MIPI-DSI
+display this way.
+
+The fix: `files/usr/lib/dracut/dracut.conf.d/90-ogu-minimal.conf` +
+`dracut --no-kernel` produce a minimal initramfs (systemd + ostree only, no
+kernel modules — everything boot-critical is built into the custom kernel).
+Both the Containerfile and `create-full-image.sh` enforce a hard 15MB limit.
+
+The previous workaround (a hand-rolled ~80KB static C init) was removed
+after the dracut path was verified on hardware — see git history
+(`files/initramfs/init.c`) if it's ever needed again.
 
 ## Features
 

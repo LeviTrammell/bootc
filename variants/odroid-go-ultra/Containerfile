@@ -10,7 +10,7 @@ FROM --platform=linux/arm64 ${KERNEL_IMAGE} AS custom-kernel
 
 # Build niri-nav gamepad navigation daemon + gamepad-merger + joystick-cursor
 FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS niri-nav-builder
-RUN dnf install -y rust cargo gcc gtk4-devel gtk4-layer-shell-devel pkg-config \
+RUN dnf install -y rust cargo gcc glibc-static gtk4-devel gtk4-layer-shell-devel pkg-config \
     wayland-devel wlr-protocols-devel && dnf clean all
 COPY variants/odroid-go-ultra/niri-nav/ /build/
 WORKDIR /build
@@ -37,7 +37,10 @@ RUN gcc -static -o /build/vt-switch-monitor /tmp/vt-switch-monitor.c
 FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS cage-builder
 RUN dnf install -y meson ninja-build gcc wlroots-devel \
     libxkbcommon-devel wayland-protocols-devel libseat-devel git && dnf clean all
-RUN git clone --depth=1 https://github.com/cage-kiosk/cage.git /build/cage
+# Pinned to v0.2.1 (last wlroots-0.19 revision) - cage master requires
+# wlroots-0.20, newer than Fedora 42's wlroots-devel (0.19.2)
+RUN git clone https://github.com/cage-kiosk/cage.git /build/cage && \
+    git -C /build/cage checkout f9626f7951
 WORKDIR /build/cage
 RUN meson setup builddir && ninja -C builddir
 
@@ -45,24 +48,15 @@ RUN meson setup builddir && ninja -C builddir
 FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS esde-builder
 RUN dnf install -y cmake gcc-c++ SDL2-devel mesa-libGLES-devel mesa-libEGL-devel \
     freeimage-devel freetype-devel libcurl-devel pugixml-devel rapidjson-devel \
-    ffmpeg-free-devel poppler-cpp-devel libgit2-devel bluez-libs-devel git && dnf clean all
-RUN git clone --depth=1 \
+    ffmpeg-free-devel poppler-cpp-devel libgit2-devel bluez-libs-devel \
+    alsa-lib-devel git && dnf clean all
+# Pinned to a release tag - unpinned master drifts out of sync with
+# Fedora 42's toolchain/library versions
+RUN git clone --depth=1 --branch v3.4.1 \
     https://gitlab.com/es-de/emulationstation-de.git /build/esde
 WORKDIR /build/esde
 RUN cmake -B build -DGLES=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build -j$(nproc) && DESTDIR=/output cmake --install build
-
-# Build custom minimal initramfs (replaces dracut - dracut's large initramfs
-# causes CMA memory pressure that kills the MIPI-DSI display on the S922X)
-FROM --platform=linux/arm64 alpine:3.20 AS initramfs-builder
-RUN apk add --no-cache gcc musl-dev linux-headers cpio
-COPY variants/odroid-go-ultra/files/initramfs/init.c /tmp/init.c
-RUN gcc -static -no-pie -Os -o /tmp/init /tmp/init.c && \
-    mkdir -p /initramfs/dev /initramfs/proc /initramfs/sys \
-             /initramfs/mnt /initramfs/sysroot /initramfs/realroot && \
-    cp /tmp/init /initramfs/init && chmod 755 /initramfs/init && \
-    cd /initramfs && find . | cpio -o -H newc | gzip > /tmp/initramfs.img && \
-    echo "Custom initramfs: $(du -h /tmp/initramfs.img | cut -f1)"
 
 FROM quay.io/fedora/fedora-bootc:${FEDORA_MAJOR_VERSION}
 
@@ -75,6 +69,7 @@ RUN dnf remove -y kernel-core kernel-modules kernel-modules-core kernel-modules-
 # Install necessary packages (no kernel packages - using custom kernel)
 RUN dnf install -y \
     ostree \
+    dracut \
     terminus-fonts-console \
     mesa-dri-drivers \
     mesa-vulkan-drivers \
@@ -108,7 +103,11 @@ COPY --from=custom-kernel /boot/Image /tmp/kernel/Image
 COPY --from=custom-kernel /boot/dtb/ /tmp/kernel/dtb/
 COPY --from=custom-kernel /lib/modules/ /tmp/kernel/modules/
 
-COPY --from=initramfs-builder /tmp/initramfs.img /tmp/custom-initramfs.img
+# Minimal dracut config: the vendor U-Boot loads the initrd at a fixed
+# 0x03080000 with no relocation, so it MUST stay small. ARM Trusted
+# Firmware (BL31) lives at 0x05000000 - an initrd over ~31MB overwrites
+# live secure firmware; over ~15.5MB it reaches U-Boot's script area.
+COPY variants/odroid-go-ultra/files/usr/lib/dracut/dracut.conf.d/90-ogu-minimal.conf /usr/lib/dracut/dracut.conf.d/90-ogu-minimal.conf
 
 RUN KVER=$(cat /tmp/kernel-version) && \
     echo "Installing custom kernel ${KVER}..." && \
@@ -121,10 +120,22 @@ RUN KVER=$(cat /tmp/kernel-version) && \
     cp -r /tmp/kernel/dtb/* /usr/lib/modules/${KVER}/dtb/ && \
     # Run depmod
     depmod ${KVER} && \
-    # Install custom initramfs (replaces dracut)
-    cp /tmp/custom-initramfs.img /usr/lib/modules/${KVER}/initramfs.img && \
+    # Generate minimal dracut initramfs. --no-kernel: every boot-critical
+    # driver (MMC, ext4, vfat, DRM) is built into the custom kernel, so
+    # the initramfs needs no modules or firmware. The fedora-bootc base
+    # confs force-add the ostree + bootc dracut modules.
+    dracut --force --no-hostonly --no-kernel --reproducible \
+        --kver ${KVER} /usr/lib/modules/${KVER}/initramfs.img && \
+    SIZE=$(stat -c%s /usr/lib/modules/${KVER}/initramfs.img) && \
     echo "Initramfs: $(du -h /usr/lib/modules/${KVER}/initramfs.img | cut -f1)" && \
-    rm -rf /tmp/kernel /tmp/kernel-version /tmp/custom-initramfs.img
+    lsinitrd /usr/lib/modules/${KVER}/initramfs.img | head -30 && \
+    # Hard limit: 15MB keeps the initrd clear of U-Boot's boot script
+    # area (0x04000000) and far below ARM Trusted Firmware (0x05000000).
+    if [ "${SIZE}" -gt 15728640 ]; then \
+        echo "ERROR: initramfs is ${SIZE} bytes (>15MB) - unsafe to load at 0x03080000"; \
+        exit 1; \
+    fi && \
+    rm -rf /tmp/kernel /tmp/kernel-version
 
 # Copy device trees to /boot/dtb for extlinux.conf FDT references
 RUN KVER=$(ls /usr/lib/modules/ | head -1) && \
@@ -281,11 +292,23 @@ RUN mkdir -p /etc/skel/.config/aethersx2/inis
 COPY variants/odroid-go-ultra/files/etc/skel/.config/aethersx2/inis/PCSX2.ini /etc/skel/.config/aethersx2/inis/PCSX2.ini
 
 # === Boot speed: mask services that cause timeouts on this hardware ===
-# boot-efi.mount: bootc creates an EFI mount but this device uses U-Boot MBR boot,
-# so the EFI partition UUID doesn't exist, causing a 44-second device timeout.
 # NFS: not used on this handheld; nfs-client.target adds to the boot critical chain.
-RUN systemctl mask boot-efi.mount nfs-client.target gssproxy.service \
+# NOTE: boot-efi.mount is no longer masked. The old 44s timeout happened
+# because create-full-image.sh reformatted P1 with a new FAT volume ID,
+# orphaning the UUID in the generated mount unit - the script now preserves
+# the volume ID instead. (bootc-image-builder also now fails the build if
+# it cannot enable the mount units it generates.)
+RUN systemctl mask nfs-client.target gssproxy.service \
     rpc-statd.service rpcbind.service rpcbind.socket
+
+# bootc-image-builder's users stage runs `useradd --root` against the
+# deployed tree. That reads /etc/group only - it does not consult
+# nss-altfiles (/usr/lib/group), where image-mode Fedora keeps the system
+# groups. Copy the groups config.toml references into /etc/group so
+# useradd can resolve them.
+RUN for g in render input video; do \
+        grep -q "^${g}:" /etc/group || grep "^${g}:" /usr/lib/group >> /etc/group; \
+    done
 
 # Embed bootc-image-builder config so the image declares its own partitioning needs
 COPY variants/odroid-go-ultra/config.toml /usr/lib/bootc-image-builder/config.toml
