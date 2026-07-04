@@ -23,6 +23,11 @@ sleep 0.5  # let virtual device appear
 # SDL2 GameController mapping for the OGU Virtual Gamepad
 export SDL_GAMECONTROLLERCONFIG="0600d4ca474f00003055000001000000,OGU Virtual Gamepad,platform:Linux,a:b0,b:b1,x:b3,y:b2,leftshoulder:b4,rightshoulder:b5,lefttrigger:b6,righttrigger:b7,back:b8,start:b9,dpup:b10,dpdown:b11,dpleft:b12,dpright:b13,leftx:a0,lefty:a1,rightx:a2,righty:a3,"
 
+# Native Wayland for SDL apps (ES-DE, RetroArch). The X11 default routes
+# through Xwayland, which crashes cage with an xwm surface-destroy
+# assertion the moment ES-DE maps its window.
+export SDL_VIDEODRIVER=wayland
+
 cage -s -- bash -c '
     wlr-randr --output DSI-1 --transform 90 2>/dev/null
     exec es-de
