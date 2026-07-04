@@ -52,11 +52,11 @@ FROM registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS aethersx2-extr
 RUN dnf install -y squashfs-tools binutils && dnf clean all
 RUN curl -L -o /tmp/aethersx2.AppImage \
       https://github.com/ROCKNIX/packages/raw/main/aethersx2-sa-v1.5-3606.AppImage && \
-    OFF=$(readelf -h /tmp/aethersx2.AppImage | python3 -c ' \
-import sys, re; \
-t = sys.stdin.read(); \
-g = lambda p: int(re.search(p + r":\s+(\d+)", t).group(1)); \
-print(g("Start of section headers") + g("Size of section headers") * g("Number of section headers"))') && \
+    OFF=$(readelf -h /tmp/aethersx2.AppImage | awk -F: \
+      '/Start of section headers/{s=$2+0} \
+       /Size of section headers/{z=$2+0} \
+       /Number of section headers/{n=$2+0} \
+       END{print s+z*n}') && \
     unsquashfs -d /output/aethersx2-sa -offset "$OFF" /tmp/aethersx2.AppImage && \
     rm /tmp/aethersx2.AppImage
 
