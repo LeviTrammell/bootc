@@ -26,9 +26,14 @@ WORKDIR /build
 RUN cargo build --release -p niri-nav -p controller-shell
 # Build gamepad-merger (merges 3 evdev devices into one virtual gamepad via uinput)
 RUN gcc -o /build/gamepad-merger /build/niri-nav/gamepad-merger.c -O2 -lm
-# Build osk-overlay (GTK4 + gtk-layer-shell on-screen keyboard overlay)
-RUN gcc -o /build/osk-overlay /build/niri-nav/osk-overlay.c \
-    $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0)
+# Build osk-overlay (GTK4 + gtk-layer-shell on-screen keyboard overlay;
+# input-method-v2 client so it auto-shows when a text field gains focus)
+RUN wayland-scanner client-header \
+      /build/niri-nav/protocols/input-method-unstable-v2.xml /build/im2-client.h && \
+    wayland-scanner private-code \
+      /build/niri-nav/protocols/input-method-unstable-v2.xml /build/im2-code.c && \
+    gcc -o /build/osk-overlay /build/niri-nav/osk-overlay.c /build/im2-code.c \
+    -I/build $(pkg-config --cflags --libs gtk4 gtk4-layer-shell-0 wayland-client)
 # Build joystick-cursor (analog stick → Wayland virtual pointer via wlr protocol)
 RUN wayland-scanner client-header \
       /usr/share/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml \
@@ -41,6 +46,13 @@ RUN wayland-scanner client-header \
 # Build vt-switch-monitor (L1+R1+Select -> chvt for TTY2 emulation side)
 COPY variants/odroid-go-ultra/files/usr/local/bin/vt-switch-monitor.c /tmp/vt-switch-monitor.c
 RUN gcc -static -o /build/vt-switch-monitor /tmp/vt-switch-monitor.c
+
+# Fetch Zen browser (official aarch64 tarball, pinned release)
+FROM registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS zen-fetch
+ARG ZEN_VERSION=1.21.5b
+RUN curl -L -o /tmp/zen.tar.xz \
+      https://github.com/zen-browser/desktop/releases/download/${ZEN_VERSION}/zen.linux-aarch64.tar.xz && \
+    mkdir -p /output && tar xJf /tmp/zen.tar.xz -C /output
 
 # Extract AetherSX2 (PS2 emulator - ROCKNIX binary v1.5-3606) without
 # executing it: the AppImage runtime is an aarch64 dynamic executable
@@ -283,6 +295,14 @@ COPY variants/odroid-go-ultra/files/usr/lib/systemd/user/controller-shell.servic
 COPY variants/odroid-go-ultra/files/etc/controller-shell/config.json /etc/controller-shell/config.json
 RUN systemctl --global enable controller-shell.service
 
+# === Browser (Zen, gamepad-driven via niri-nav Browser mode) ===
+COPY --from=zen-fetch /output/zen/ /usr/local/share/zen/
+COPY variants/odroid-go-ultra/files/usr/local/share/zen/defaults/pref/autoconfig.js /usr/local/share/zen/defaults/pref/autoconfig.js
+COPY variants/odroid-go-ultra/files/usr/local/share/zen/zen-handheld.cfg /usr/local/share/zen/zen-handheld.cfg
+COPY variants/odroid-go-ultra/files/usr/local/bin/zen /usr/local/bin/zen
+COPY variants/odroid-go-ultra/files/usr/share/applications/zen.desktop /usr/share/applications/zen.desktop
+RUN chmod +x /usr/local/bin/zen
+
 # === Emulation environment (cage + ES-DE + RetroArch + AetherSX2 on TTY2) ===
 
 # Install cage (Wayland kiosk compositor)
@@ -315,9 +335,19 @@ RUN chmod +x /usr/local/bin/emulation-launch.sh
 COPY variants/odroid-go-ultra/files/etc/sudoers.d/vt-switch /etc/sudoers.d/vt-switch
 RUN chmod 440 /etc/sudoers.d/vt-switch
 
+# SD card automount (ROMs live on the old home partition, label home-sd).
+# nofail: the card has a history of I/O errors — never block boot on it.
+COPY variants/odroid-go-ultra/files/usr/lib/systemd/system/var-mnt-sdcard.mount /usr/lib/systemd/system/var-mnt-sdcard.mount
+RUN systemctl enable var-mnt-sdcard.mount
+
 # ES-DE custom system definitions (PS2 via AetherSX2)
 RUN mkdir -p /etc/skel/ES-DE/custom_systems
 COPY variants/odroid-go-ultra/files/etc/skel/.config/es-de/custom_systems/es_systems.xml /etc/skel/ES-DE/custom_systems/es_systems.xml
+
+# ES-DE settings: scraped media from the SD card; ROMs dir symlinks there too
+RUN mkdir -p /etc/skel/ES-DE/settings
+COPY variants/odroid-go-ultra/files/etc/skel/ES-DE/settings/es_settings.xml /etc/skel/ES-DE/settings/es_settings.xml
+RUN ln -s /var/mnt/sdcard/levi/ROMs /etc/skel/ROMs
 
 # RetroArch defaults (Vulkan, Wayland, udev input)
 RUN mkdir -p /etc/skel/.config/retroarch

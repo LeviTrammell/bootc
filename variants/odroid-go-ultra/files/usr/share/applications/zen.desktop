@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Zen Browser
+Comment=Browse the web
+Exec=zen %u
+Icon=/usr/local/share/zen/browser/chrome/icons/default/default128.png
+Terminal=false
+Categories=Network;WebBrowser;
+StartupWMClass=zen

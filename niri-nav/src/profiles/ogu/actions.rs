@@ -19,7 +19,9 @@ pub enum ActionResult {
 }
 
 /// Dispatch a button event based on current mode and modifiers. `f3` is
-/// the OGU-only modifier tracked by the profile.
+/// the OGU-only modifier tracked by the profile. `text_entry_return` is
+/// where dismissing the OSK goes back to — set on TextEntry entry so the
+/// browser and element-nav flows each return to their own mode.
 pub async fn dispatch(
     mode: NavMode,
     button: Button,
@@ -28,6 +30,7 @@ pub async fn dispatch(
     f3: bool,
     grid: &mut KeyboardGrid,
     cursor: &mut JoystickCursor,
+    text_entry_return: &mut NavMode,
 ) -> Result<ActionResult> {
     if state != ButtonState::Pressed {
         return Ok(ActionResult::Stay);
@@ -40,9 +43,14 @@ pub async fn dispatch(
 
     match mode {
         NavMode::WindowNav => dispatch_window_nav(button, mods, f3, cursor).await,
-        NavMode::ElementNav => dispatch_element_nav(button, mods, grid, cursor).await,
-        NavMode::TextEntry => dispatch_text_entry(button, grid).await,
+        NavMode::ElementNav => {
+            dispatch_element_nav(button, mods, cursor, text_entry_return).await
+        }
+        NavMode::TextEntry => dispatch_text_entry(button, grid, *text_entry_return).await,
         NavMode::Shell => dispatch_shell(button),
+        NavMode::Browser => {
+            dispatch_browser(button, mods, f3, cursor, text_entry_return).await
+        }
         // Ungrabbed modes never reach dispatch (should_dispatch = false).
         NavMode::GamePassthrough | NavMode::Emulation => Ok(ActionResult::Stay),
     }
@@ -113,13 +121,13 @@ async fn dispatch_window_nav(
 async fn dispatch_element_nav(
     button: Button,
     mods: &Modifiers,
-    grid: &mut KeyboardGrid,
     cursor: &mut JoystickCursor,
+    text_entry_return: &mut NavMode,
 ) -> Result<ActionResult> {
-    // L1+X -> text entry (spawn overlay)
+    // L1+X -> text entry (overlay shown by on_transition)
     if mods.l1 && button == Button::X {
         info!("-> TEXT_ENTRY");
-        grid.spawn_overlay()?;
+        *text_entry_return = NavMode::ElementNav;
         return Ok(ActionResult::Transition(NavMode::TextEntry));
     }
 
@@ -159,7 +167,11 @@ async fn dispatch_element_nav(
     Ok(ActionResult::Stay)
 }
 
-async fn dispatch_text_entry(button: Button, grid: &mut KeyboardGrid) -> Result<ActionResult> {
+async fn dispatch_text_entry(
+    button: Button,
+    grid: &mut KeyboardGrid,
+    return_mode: NavMode,
+) -> Result<ActionResult> {
     match button {
         // D-pad navigates the keyboard grid
         Button::DpadUp => {
@@ -187,21 +199,87 @@ async fn dispatch_text_entry(button: Button, grid: &mut KeyboardGrid) -> Result<
         Button::X => wtype::space().await?,
         // Y = backspace
         Button::Y => wtype::backspace().await?,
-        // Select = toggle shift
+        // Select = cycle layer (lowercase -> UPPER -> symbols)
         Button::Select => {
-            grid.toggle_shift();
+            grid.cycle_layer();
             grid.send_position();
         }
         // L1 = cursor left in text field
         Button::L1 => wtype::left().await?,
         // R1 = cursor right in text field
         Button::R1 => wtype::right().await?,
-        // B = dismiss overlay, return to ElementNav
+        // Start = Return (submit URL / form)
+        Button::Start => wtype::enter().await?,
+        // B = dismiss overlay, return to wherever we came from
+        // (on_transition hides the overlay and resets the grid)
         Button::B => {
-            info!("-> ELEMENT_NAV (hiding OSK overlay)");
-            grid.kill_overlay();
-            grid.reset();
-            return Ok(ActionResult::Transition(NavMode::ElementNav));
+            info!("-> {} (hiding OSK overlay)", return_mode);
+            return Ok(ActionResult::Transition(return_mode));
+        }
+        _ => {}
+    }
+
+    Ok(ActionResult::Stay)
+}
+
+/// Browser mode (Zen): PSP-era browsing on a handheld. The left stick
+/// (via joystick-cursor) is the mouse, the right stick scrolls; here we
+/// map the digital inputs:
+///   D-pad Down/Up = next/prev interactable (Tab / Shift+Tab —
+///     landing on a text field auto-summons the OSK via input-method)
+///   A = activate focused element (Enter)    X = click at cursor
+///   R2 = left click    L2 = right click     B = back
+///   Y = OSK    Select = URL bar + OSK    L1/R1 = prev/next tab
+///   F3+A = new tab  F3+X = close tab  F3+B = forward  F3+Y = reload
+///   D-pad Left/Right = arrow keys   Start = Shell
+async fn dispatch_browser(
+    button: Button,
+    _mods: &Modifiers,
+    f3: bool,
+    cursor: &mut JoystickCursor,
+    text_entry_return: &mut NavMode,
+) -> Result<ActionResult> {
+    if f3 {
+        match button {
+            Button::A => wtype::new_tab().await?,
+            Button::X => wtype::close_tab().await?,
+            Button::B => wtype::browser_forward().await?,
+            Button::Y => wtype::reload_page().await?,
+            _ => {}
+        }
+        return Ok(ActionResult::Stay);
+    }
+
+    match button {
+        Button::A => wtype::enter().await?,
+        Button::X => cursor.click_left(),
+        Button::R2 => cursor.click_left(),
+        Button::L2 => cursor.click_right(),
+        Button::B => wtype::browser_back().await?,
+        Button::L1 => wtype::prev_tab().await?,
+        Button::R1 => wtype::next_tab().await?,
+        Button::DpadUp => wtype::shift_tab().await?,
+        Button::DpadDown => wtype::tab().await?,
+        Button::DpadLeft => wtype::left().await?,
+        Button::DpadRight => wtype::right().await?,
+        // Y = OSK for the focused field
+        Button::Y => {
+            info!("-> TEXT_ENTRY (from browser)");
+            *text_entry_return = NavMode::Browser;
+            return Ok(ActionResult::Transition(NavMode::TextEntry));
+        }
+        // Select = jump to the URL bar; the resulting text-field focus
+        // also auto-summons the OSK via input-method-v2, but we
+        // transition immediately so the d-pad drives the grid.
+        Button::Select => {
+            info!("-> TEXT_ENTRY (URL bar)");
+            wtype::focus_urlbar().await?;
+            *text_entry_return = NavMode::Browser;
+            return Ok(ActionResult::Transition(NavMode::TextEntry));
+        }
+        Button::Start => {
+            info!("-> SHELL");
+            return Ok(ActionResult::Transition(NavMode::Shell));
         }
         _ => {}
     }

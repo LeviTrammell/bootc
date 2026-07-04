@@ -1,0 +1,4 @@
+#!/bin/sh
+# Zen browser launcher for the OGU handheld (Wayland native).
+export MOZ_ENABLE_WAYLAND=1
+exec /usr/local/share/zen/zen "$@"

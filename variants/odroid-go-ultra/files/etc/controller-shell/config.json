@@ -13,6 +13,13 @@
       "view": "apps"
     },
     {
+      "key": "browser",
+      "label": "Browser",
+      "icon": "web-browser-symbolic",
+      "exec": ["niri", "msg", "action", "spawn", "--", "zen"],
+      "nav_mode": "browser"
+    },
+    {
       "key": "terminal",
       "label": "Terminal",
       "icon": "utilities-terminal-symbolic",

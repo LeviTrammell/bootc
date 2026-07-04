@@ -17,6 +17,10 @@ pub enum NavMode {
     /// D-pad and face buttons are forwarded to the shell over its
     /// socket. Device is GRABBED.
     Shell,
+    /// Browser mode (Zen). Analog stick drives the cursor, face
+    /// buttons/triggers click, L1/R1 switch tabs, d-pad scrolls.
+    /// Device is GRABBED.
+    Browser,
     /// Raw passthrough for games running inside niri. Device is
     /// UNGRABBED, all input goes to apps. Daemon only watches for the
     /// exit combo.
@@ -31,7 +35,11 @@ impl NavMode {
     /// Whether the evdev device should be grabbed in this mode.
     pub fn should_grab(self) -> bool {
         match self {
-            NavMode::WindowNav | NavMode::ElementNav | NavMode::TextEntry | NavMode::Shell => true,
+            NavMode::WindowNav
+            | NavMode::ElementNav
+            | NavMode::TextEntry
+            | NavMode::Shell
+            | NavMode::Browser => true,
             NavMode::GamePassthrough | NavMode::Emulation => false,
         }
     }
@@ -44,6 +52,7 @@ impl std::fmt::Display for NavMode {
             NavMode::ElementNav => write!(f, "ELEMENT_NAV"),
             NavMode::TextEntry => write!(f, "TEXT_ENTRY"),
             NavMode::Shell => write!(f, "SHELL"),
+            NavMode::Browser => write!(f, "BROWSER"),
             NavMode::GamePassthrough => write!(f, "GAME_PASSTHROUGH"),
             NavMode::Emulation => write!(f, "EMULATION"),
         }

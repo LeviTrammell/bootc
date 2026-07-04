@@ -23,7 +23,7 @@ pub mod wtype;
 use self::actions::ActionResult;
 use self::gamepad_merger::GamepadMerger;
 use self::joystick_cursor::JoystickCursor;
-use self::keyboard_grid::KeyboardGrid;
+use self::keyboard_grid::{KeyboardGrid, OskEvent};
 use self::state::NavMode;
 
 use crate::button::{Button, ButtonEvent, ButtonState};
@@ -53,6 +53,9 @@ pub struct OguProfile {
     /// F3 is an OGU-only modifier; tracked here rather than in shared
     /// [`Modifiers`] which only carries universal keys.
     f3: bool,
+    /// Where dismissing the OSK (TextEntry) returns to; set at each
+    /// TextEntry entry point (ElementNav or Browser).
+    text_entry_return: NavMode,
     /// When Emulation mode was entered — gates the VT watcher.
     emulation_since: Option<Instant>,
 }
@@ -85,11 +88,19 @@ impl OguProfile {
             );
         }
 
+        // The OSK overlay runs persistently: it is also our
+        // input-method-v2 focus sensor (auto show/hide on text fields).
+        let mut grid = KeyboardGrid::new();
+        if let Err(e) = grid.spawn_overlay() {
+            warn!("Failed to spawn osk-overlay: {} (OSK disabled)", e);
+        }
+
         Self {
             cursor,
             merger,
-            grid: KeyboardGrid::new(),
+            grid,
             f3: false,
+            text_entry_return: NavMode::ElementNav,
             emulation_since: None,
         }
     }
@@ -157,6 +168,7 @@ impl ControllerProfile for OguProfile {
             self.f3,
             &mut self.grid,
             &mut self.cursor,
+            &mut self.text_entry_return,
         )
         .await?;
         Ok(match res {
@@ -178,9 +190,12 @@ impl ControllerProfile for OguProfile {
     }
 
     async fn on_transition(&mut self, from: NavMode, to: NavMode) -> Result<()> {
-        // Leaving TextEntry: tear down OSK overlay.
-        if from == NavMode::TextEntry && to != NavMode::TextEntry {
-            self.grid.kill_overlay();
+        // OSK overlay visibility tracks TextEntry. (IM activation also
+        // shows/hides it on its own; these are idempotent.)
+        if to == NavMode::TextEntry && from != NavMode::TextEntry {
+            self.grid.show_overlay();
+        } else if from == NavMode::TextEntry && to != NavMode::TextEntry {
+            self.grid.hide_overlay();
             self.grid.reset();
         }
 
@@ -221,6 +236,39 @@ impl ControllerProfile for OguProfile {
     }
 
     async fn tick(&mut self, current: NavMode) -> Result<Option<NavMode>> {
+        // Keep the cursor daemon alive: it dies if it loses the race
+        // against niri creating the Wayland socket at boot, or when the
+        // compositor restarts.
+        self.cursor.ensure_alive();
+        self.grid.ensure_alive();
+
+        // PSP/phone-style OSK: the overlay reports text-field focus
+        // changes from input-method-v2. Focus in a nav mode pulls us
+        // into TextEntry; blur while in TextEntry drops us back out.
+        for ev in self.grid.poll_events() {
+            match ev {
+                OskEvent::Activated => match current {
+                    NavMode::WindowNav | NavMode::ElementNav | NavMode::Browser => {
+                        info!("text field focused -> TEXT_ENTRY");
+                        self.text_entry_return = current;
+                        return Ok(Some(NavMode::TextEntry));
+                    }
+                    NavMode::TextEntry => {}
+                    // Shell has its own keyboard; games don't want ours.
+                    _ => self.grid.hide_overlay(),
+                },
+                OskEvent::Deactivated => {
+                    if current == NavMode::TextEntry {
+                        info!("text field blurred -> {}", self.text_entry_return);
+                        return Ok(Some(self.text_entry_return));
+                    }
+                }
+                OskEvent::Unavailable => {
+                    warn!("input-method-v2 unavailable; OSK is manual-summon only")
+                }
+            }
+        }
+
         // VT watcher: while in Emulation the user is on TTY2. When the
         // console comes back to TTY1 (vt-switch-monitor combo or ES-DE
         // exit), re-enter WindowNav so the pad drives niri again without
@@ -257,6 +305,7 @@ impl ControllerProfile for OguProfile {
             "element_nav" => NavMode::ElementNav,
             "text_entry" => NavMode::TextEntry,
             "shell" | "picker" => NavMode::Shell,
+            "browser" => NavMode::Browser,
             "game_passthrough" | "passthrough" | "game" => NavMode::GamePassthrough,
             "emulation" => NavMode::Emulation,
             _ => return None,

@@ -26,6 +26,17 @@ ES-DE on TTY2); a VT watcher notices the console returning to TTY1 and
 drops back to `WindowNav`. `Start` summons the shell from anywhere in
 niri.
 
+The Browser tile spawns Zen and enters `Browser` mode: left stick =
+cursor (joystick-cursor), right stick = scroll, d-pad Down/Up =
+next/prev interactable element (Tab / Shift+Tab, PSP-style), A =
+activate focused element, X/R2 = click at cursor, L2 = right click,
+B = back, L1/R1 = prev/next tab, Select = URL bar, F3+A/X = new/close
+tab, F3+B = forward, F3+Y = reload. The OSK is PSP-style: osk-overlay
+is an input-method-v2 client, so focusing any text field (d-pad hop or
+click) auto-shows the keyboard and flips niri-nav into `TextEntry`
+(blur reverses it); in `TextEntry`, `Select` cycles lower/UPPER/symbol
+layers and `Start` sends Return.
+
 ## Build
 
 Exactly one profile feature must be enabled.
