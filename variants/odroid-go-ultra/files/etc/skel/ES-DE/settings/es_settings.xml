@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<!-- Scraped media lives on the SD card alongside the ROMs (old home
+     partition, label home-sd, mounted at /var/mnt/sdcard). -->
+<string name="MediaDirectory" value="/var/mnt/sdcard/levi/ES-DE/downloaded_media" />

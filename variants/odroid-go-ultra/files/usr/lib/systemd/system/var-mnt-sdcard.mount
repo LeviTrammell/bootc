@@ -1,0 +1,12 @@
+[Unit]
+Description=SD card (ROMs / old home partition)
+# Tolerant: the card has a history of I/O errors — never block or fail boot.
+
+[Mount]
+What=/dev/disk/by-label/home-sd
+Where=/var/mnt/sdcard
+Type=ext4
+Options=noatime,nofail,errors=remount-ro,x-systemd.device-timeout=10s
+
+[Install]
+WantedBy=local-fs.target
