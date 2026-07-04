@@ -1,4 +1,8 @@
 [Unit]
+# Never run in root's user manager — niri-nav's own `sudo chvt` opens a
+# PAM session that starts user@0, and globally-enabled units would spawn
+# a rogue root instance that binds over the levi session's sockets.
+ConditionUser=!@system
 Description=controller-shell overlay (mode tiles + app launcher)
 StartLimitIntervalSec=60
 StartLimitBurst=15
