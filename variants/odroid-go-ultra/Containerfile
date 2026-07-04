@@ -102,6 +102,11 @@ RUN dnf install -y \
     wlrctl \
     retroarch \
     wlr-randr \
+    mesa-libGLES \
+    wlroots \
+    freeimage \
+    libgit2 \
+    pugixml \
     && dnf clean all
 
 # Install custom kernel from kernel builder container
