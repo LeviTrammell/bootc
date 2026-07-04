@@ -336,8 +336,14 @@ with open(disk, 'rb') as f:
     f.seek(446)
     entry = f.read(16)
     _, _, _, _, p1_start, _ = struct.unpack('<B3sB3sII', entry)
-    f.seek(p1_start * 512 + 82)
-    fs_type = f.read(8).decode('ascii', errors='replace').strip()
+    # FS type string: offset 54 for FAT12/16, 82 for FAT32
+    fs_type = '(unknown)'
+    for off in (54, 82):
+        f.seek(p1_start * 512 + off)
+        s = f.read(8).decode('ascii', errors='replace').strip()
+        if s.startswith('FAT'):
+            fs_type = s
+            break
     print(f'  P1 filesystem: {fs_type}')
 PYEOF
 
