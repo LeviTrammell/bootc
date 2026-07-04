@@ -4,3 +4,7 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys", MODE="0666", ENV
 SUBSYSTEM=="input", KERNEL=="js*", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="adc-joystick-left", MODE="0666"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="adc-joystick-right", MODE="0666"
+
+# gamepad-merger (user session + TTY2 emulation) creates the merged
+# virtual pad through uinput; default perms are root-only 0600
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
