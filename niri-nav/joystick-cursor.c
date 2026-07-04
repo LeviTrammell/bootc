@@ -309,11 +309,20 @@ int main(void) {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    /* Connect to Wayland */
-    display = wl_display_connect(NULL);
-    if (!display) {
-        fprintf(stderr, "joystick-cursor: failed to connect to Wayland display\n");
-        return 1;
+    /* Connect to Wayland. At boot the user service can win the race
+     * against niri creating the socket, so retry instead of dying —
+     * niri-nav only spawns us once. */
+    for (int attempt = 0; ; attempt++) {
+        display = wl_display_connect(NULL);
+        if (display)
+            break;
+        if (attempt == 0)
+            fprintf(stderr, "joystick-cursor: waiting for Wayland display...\n");
+        if (attempt >= 240) { /* ~120s */
+            fprintf(stderr, "joystick-cursor: gave up waiting for Wayland display\n");
+            return 1;
+        }
+        usleep(500000);
     }
 
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -401,9 +410,20 @@ int main(void) {
             break;
         }
 
+        /* Compositor went away (niri restart): exit so niri-nav's
+         * respawn logic can bring us back against the new socket. */
+        if (fds[3].revents & (POLLHUP | POLLERR)) {
+            wl_display_cancel_read(display);
+            fprintf(stderr, "joystick-cursor: Wayland connection lost, exiting\n");
+            break;
+        }
+
         /* Handle Wayland events */
         if (fds[3].revents & POLLIN) {
-            wl_display_read_events(display);
+            if (wl_display_read_events(display) < 0) {
+                fprintf(stderr, "joystick-cursor: Wayland read failed, exiting\n");
+                break;
+            }
             wl_display_dispatch_pending(display);
         } else {
             wl_display_cancel_read(display);
