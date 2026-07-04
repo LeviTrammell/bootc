@@ -57,6 +57,7 @@ RUN curl -L -o /tmp/aethersx2.AppImage \
        /Size of section headers/{z=$2+0} \
        /Number of section headers/{n=$2+0} \
        END{print s+z*n}') && \
+    mkdir -p /output && \
     unsquashfs -d /output/aethersx2-sa -offset "$OFF" /tmp/aethersx2.AppImage && \
     rm /tmp/aethersx2.AppImage
 
