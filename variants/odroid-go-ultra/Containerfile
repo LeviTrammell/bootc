@@ -227,8 +227,9 @@ RUN chmod +x /usr/local/bin/set-gpu-clock.py && \
 # generate extlinux.conf from the ostree BLS entry on every boot.
 COPY variants/odroid-go-ultra/files/usr/local/bin/update-extlinux.sh /usr/local/bin/update-extlinux.sh
 COPY variants/odroid-go-ultra/files/etc/systemd/system/update-extlinux.service /etc/systemd/system/update-extlinux.service
+COPY variants/odroid-go-ultra/files/etc/systemd/system/update-extlinux-finalize.service /etc/systemd/system/update-extlinux-finalize.service
 RUN chmod +x /usr/local/bin/update-extlinux.sh && \
-    systemctl enable update-extlinux.service
+    systemctl enable update-extlinux.service update-extlinux-finalize.service
 
 # First boot partition resize with auto-detection
 COPY variants/odroid-go-ultra/files/usr/lib/systemd/system/growfs.service /usr/lib/systemd/system/growfs.service

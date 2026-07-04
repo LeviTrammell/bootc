@@ -1,0 +1,19 @@
+[Unit]
+Description=Regenerate extlinux.conf after ostree finalizes the staged deployment
+# Stop-ordering: units stop in reverse start order, so Before= at start
+# means our ExecStop runs AFTER ostree-finalize-staged's ExecStop (which
+# is what rewrites the BLS entries and flips /ostree/boot.0 <-> boot.1).
+# Without this, the extlinux.conf generated at boot points into the
+# pre-finalize boot.N tree and the next boot dies in ostree-prepare-root.
+Before=ostree-finalize-staged.service
+RequiresMountsFor=/boot
+ConditionPathExists=/boot/loader/entries
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/bin/update-extlinux.sh
+
+[Install]
+WantedBy=multi-user.target
