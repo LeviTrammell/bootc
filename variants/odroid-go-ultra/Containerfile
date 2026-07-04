@@ -152,6 +152,12 @@ RUN KVER=$(ls /usr/lib/modules/ | head -1) && \
 # Enable SSH
 RUN systemctl enable sshd
 
+# Authorized keys baked into the image (dev workstation), in addition to
+# the key bootc-image-builder provisions into ~/.ssh/authorized_keys
+COPY variants/odroid-go-ultra/files/etc/ssh/sshd_config.d/30-image-keys.conf /etc/ssh/sshd_config.d/30-image-keys.conf
+COPY variants/odroid-go-ultra/files/usr/lib/ssh/levi.keys /usr/lib/ssh/levi.keys
+RUN chmod 644 /usr/lib/ssh/levi.keys /etc/ssh/sshd_config.d/30-image-keys.conf
+
 # Kernel modules for Amlogic S922X (panfrost for GPU rendering)
 RUN echo -e "meson_drm\npanfrost\ngpio_keys\nmeson_ir\nuinput" > /etc/modules-load.d/amlogic.conf
 
