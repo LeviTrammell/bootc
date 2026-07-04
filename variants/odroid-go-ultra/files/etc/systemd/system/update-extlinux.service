@@ -1,8 +1,9 @@
 [Unit]
-Description=Generate extlinux.conf from ostree BLS entry
-DefaultDependencies=no
-After=local-fs.target boot.mount
-Before=sysinit.target
+Description=Generate U-Boot extlinux.conf from ostree BLS entries
+# Re-asserts P1 consistency at boot; the load-bearing run is the
+# shutdown-time one in update-extlinux-finalize.service.
+RequiresMountsFor=/boot /boot/efi
+After=boot.mount boot-efi.mount
 
 [Service]
 Type=oneshot
@@ -10,4 +11,4 @@ ExecStart=/usr/local/bin/update-extlinux.sh
 StandardOutput=journal
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=multi-user.target

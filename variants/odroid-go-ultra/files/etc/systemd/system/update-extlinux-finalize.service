@@ -6,7 +6,9 @@ Description=Regenerate extlinux.conf after ostree finalizes the staged deploymen
 # Without this, the extlinux.conf generated at boot points into the
 # pre-finalize boot.N tree and the next boot dies in ostree-prepare-root.
 Before=ostree-finalize-staged.service
-RequiresMountsFor=/boot
+# /boot/efi (P1 FAT32) is where U-Boot reads extlinux.conf and kernel
+# payloads from - it must still be mounted when our ExecStop runs.
+RequiresMountsFor=/boot /boot/efi
 ConditionPathExists=/boot/loader/entries
 
 [Service]
