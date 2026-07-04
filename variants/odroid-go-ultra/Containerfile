@@ -42,6 +42,24 @@ RUN wayland-scanner client-header \
 COPY variants/odroid-go-ultra/files/usr/local/bin/vt-switch-monitor.c /tmp/vt-switch-monitor.c
 RUN gcc -static -o /build/vt-switch-monitor /tmp/vt-switch-monitor.c
 
+# Extract AetherSX2 (PS2 emulator - ROCKNIX binary v1.5-3606) without
+# executing it: the AppImage runtime is an aarch64 dynamic executable
+# whose self-exec doesn't survive qemu-user emulation, so builds on
+# x86_64 hosts fail with "Exec format error". Host-arch squashfs-tools
+# unpack the embedded filesystem instead (offset = end of the runtime
+# ELF, from its section-header table).
+FROM registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS aethersx2-extract
+RUN dnf install -y squashfs-tools binutils && dnf clean all
+RUN curl -L -o /tmp/aethersx2.AppImage \
+      https://github.com/ROCKNIX/packages/raw/main/aethersx2-sa-v1.5-3606.AppImage && \
+    OFF=$(readelf -h /tmp/aethersx2.AppImage | python3 -c ' \
+import sys, re; \
+t = sys.stdin.read(); \
+g = lambda p: int(re.search(p + r":\s+(\d+)", t).group(1)); \
+print(g("Start of section headers") + g("Size of section headers") * g("Number of section headers"))') && \
+    unsquashfs -d /output/aethersx2-sa -offset "$OFF" /tmp/aethersx2.AppImage && \
+    rm /tmp/aethersx2.AppImage
+
 # Build cage (Wayland kiosk compositor for emulation on TTY2)
 FROM --platform=linux/arm64 registry.fedoraproject.org/fedora:${FEDORA_MAJOR_VERSION} AS cage-builder
 RUN dnf install -y meson ninja-build gcc wlroots-devel \
@@ -274,15 +292,9 @@ COPY --from=esde-builder /output/ /
 # Install vt-switch-monitor (L1+R1+Select -> chvt 1 on TTY2 side)
 COPY --from=niri-nav-builder /build/vt-switch-monitor /usr/local/bin/vt-switch-monitor
 
-# Install AetherSX2 (PS2 emulator - ROCKNIX binary v1.5-3606)
-RUN cd /tmp && \
-    curl -L -o aethersx2.AppImage \
-      https://github.com/ROCKNIX/packages/raw/main/aethersx2-sa-v1.5-3606.AppImage && \
-    chmod +x aethersx2.AppImage && \
-    ./aethersx2.AppImage --appimage-extract && \
-    mkdir -p /usr/local/share/aethersx2-sa && \
-    cp -r squashfs-root/* /usr/local/share/aethersx2-sa/ && \
-    rm -rf aethersx2.AppImage squashfs-root
+# Install AetherSX2 (PS2 emulator - ROCKNIX binary v1.5-3606),
+# unpacked by the aethersx2-extract stage
+COPY --from=aethersx2-extract /output/aethersx2-sa/ /usr/local/share/aethersx2-sa/
 # Wrapper script: sets PAN_I_WANT_A_BROKEN_VULKAN_DRIVER and cd's to correct dir
 COPY variants/odroid-go-ultra/files/usr/local/bin/aethersx2 /usr/local/bin/aethersx2
 RUN chmod +x /usr/local/bin/aethersx2
